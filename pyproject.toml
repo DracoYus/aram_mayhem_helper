@@ -1,0 +1,35 @@
+[project]
+name = "aram-mayhem-helper"
+version = "0.1.0"
+description = "A helper tool for ARAM Mayhem mode in League of Legends"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["requests>=2.32.5"]
+authors = [{ name = "DracoYu", email = "876319691@qq.com" }]
+
+[project.scripts]
+main = "aram_mayhem_helper.main:main"
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.1",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]  # E=pycodestyle F=pyflakes I=import排序
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
