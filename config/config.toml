@@ -11,3 +11,9 @@ save_directory = "opgg/aram_augments/"
 [crawler.ddragon.champion]
 base_url = "https://ddragon.leagueoflegends.com/cdn/{0}/data/en_US/champion.json"
 save_directory = "ddragon/champions/"
+
+[suggest]
+immediate_select_weighted_sum_threshold = 0.6
+immediate_select_precentage_threshold = 0.15
+consider_select_weighted_sum_threshold = 0.45
+consider_select_precentage_threshold = 0.3
