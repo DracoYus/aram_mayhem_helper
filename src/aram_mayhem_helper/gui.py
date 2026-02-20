@@ -1,6 +1,6 @@
 import time
 import tkinter as tk
-from tkinter import messagebox, scrolledtext
+from tkinter import scrolledtext
 
 from aram_mayhem_helper.algorithm.suggest import Suggest
 from aram_mayhem_helper.league_client_api.live_data import get_current_champion_name
@@ -44,7 +44,6 @@ def recognize_champion(log_area):
         print_log(f"当前英雄：{champion_name}", log_area)
     except Exception as e:
         print_log(f"「识别当前英雄」操作出错：{str(e)}", log_area)
-        messagebox.showerror("错误", f"识别失败：{str(e)}")
 
 
 def recognize_augment(log_area):
@@ -58,7 +57,6 @@ def recognize_augment(log_area):
             print_log(str(augment_info), log_area)
     except Exception as e:
         print_log(f"「识别符文」操作出错：{str(e)}", log_area)
-        messagebox.showerror("错误", f"导出失败：{str(e)}")
 
 
 # ====================== 第三步：创建完整GUI（按钮+日志区域） ======================

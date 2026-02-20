@@ -85,26 +85,29 @@ class Suggest:
         augments_num = augments[0]["group_size"]
         immediate_select_rank_threshold = augments_num * Suggest.immediate_select_precentage_threshold
         consider_select_rank_threshold = augments_num * Suggest.consider_select_precentage_threshold
-        sorted_augments = sorted(augments, key=lambda x: x["weighted_sum"], reverse=True)
+        max_weighted_sum = max(item["weighted_sum"] for item in augments)
         result = []
-        for idx, augment in enumerate(sorted_augments):
+        for augment in augments:
+            message = None
             if (
                 augment["rank"] <= immediate_select_rank_threshold
                 or augment["weighted_sum"] >= Suggest.immediate_select_weighted_sum_threshold
             ):
-                result.append(f"快选符文：{augment['name']}，别的不用看了, {augment['rank']} / {augments_num}")
-                continue
-            if (
+                message = f"快选符文：{augment['name']}，别的不用看了"
+            elif (
                 augment["rank"] <= consider_select_rank_threshold
                 or augment["weighted_sum"] >= Suggest.consider_select_weighted_sum_threshold
             ):
-                if idx == 0:
-                    result.append(f"考虑符文：{augment['name']}，暂时先别换{augment['rank']} / {augments_num}")
-                    continue
+                if max_weighted_sum == augment["weighted_sum"]:
+                    message = f"考虑符文：{augment['name']}，暂时先别换"
                 else:
-                    result.append(f"考虑符文：{augment['name']}，可以随掉，{augment['rank']} / {augments_num}")
-                    continue
-            result.append(f"垃圾符文: {augment['name']}，别选，太垃圾了，{augment['rank']} / {augments_num}")
+                    message = f"考虑符文：{augment['name']}，可以随掉"
+            else:
+                message = f"垃圾符文: {augment['name']}，别选，太垃圾了"
+            message += (
+                f"，{augment['rank']}/{augments_num}，表现: {augment['performance']}，流行度: {augment['popular']}"
+            )
+            result.append(message)
 
         return result
 
