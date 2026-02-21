@@ -32,8 +32,9 @@ class OCRTool:
             lang=self.lang,
             show_log=self.show_log,
             use_gpu=self.use_gpu,
-            det_db_unclip_ratio=2.5,
-            det_db_box_thresh=0.5,
+            det_db_thresh=0.2,
+            det_db_box_thresh=0.3,
+            det_db_unclip_ratio=2.0,
             det_db_score_mode="fast",  # 加快检测速度，不影响合并
         )
 
@@ -44,7 +45,7 @@ class OCRTool:
         :return: 截图的 numpy 数组（RGB 格式）
         """
         try:
-            screenshot = ImageGrab.grab(bbox)
+            screenshot = ImageGrab.grab(bbox).convert("L")
             return np.array(screenshot)
         except Exception as e:
             raise RuntimeError(f"屏幕截图失败: {str(e)}")
@@ -92,8 +93,8 @@ class OCRTool:
         result.extend(self.capture_and_recognize((940, 835, 1475, 895)))
         result.extend(self.capture_and_recognize((1645, 835, 2180, 895)))
         result.extend(self.capture_and_recognize((2355, 835, 2890, 895)))
-        text_list = [item["text"] for item in result]
-        self.logger.info("识别到符文选项", text_list)
+        text_list = [item["text"].strip() for item in result]
+        self.logger.info(f"识别到符文选项: {text_list}")
         return text_list
 
 

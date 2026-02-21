@@ -57,6 +57,7 @@ def recognize_augment(log_area):
             print_log(str(augment_info), log_area)
     except Exception as e:
         print_log(f"「识别符文」操作出错：{str(e)}", log_area)
+        print_log(str(augments), log_area)
 
 
 # ====================== 第三步：创建完整GUI（按钮+日志区域） ======================
@@ -64,7 +65,7 @@ def create_gui():
     # 1. 创建主窗口
     root = tk.Tk()
     root.title("LOL海克斯乱斗工具")
-    root.geometry("600x400")  # 扩大窗口，容纳日志区域
+    root.geometry("800x400")  # 扩大窗口，容纳日志区域
     root.resizable(False, False)
 
     # 2. 创建按钮框架（放置两个功能按钮）
@@ -99,7 +100,7 @@ def create_gui():
 
     log_area = scrolledtext.ScrolledText(
         root,
-        width=70,  # 宽度（字符数）
+        width=120,  # 宽度（字符数）
         height=15,  # 高度（行数）
         font=("Consolas", 9),  # 等宽字体，适合日志
         state=tk.DISABLED,  # 初始锁定，禁止编辑
