@@ -12,7 +12,7 @@ def aram_augment_crawler() -> None:
     爬取英雄符文数据入口
     """
     crawler = AramAugmentCrawler()
-    crawler.batch_crawl(0, 999)
+    crawler.batch_crawl(17, 20)
 
 
 def chamipon_crawler() -> None:
@@ -37,5 +37,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     setup_logging()
-    main()
-    # aram_augment_crawler()
+    # main()
+    aram_augment_crawler()
+    # chamipon_crawler()

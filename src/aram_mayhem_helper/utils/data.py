@@ -18,6 +18,8 @@ class Data:
         """获取所有英雄的完整数据"""
         if not self.champion_data:
             champion_data_path = config.data_path / Path(config.get("crawler", "ddragon", "champion", "save_directory"))
+            if not champion_data_path.exists():
+                return {}
             files = [f for f in champion_data_path.iterdir() if f.is_file()]
             if not files:
                 self.logger.error(f"没有找到任何英雄数据文件在: {champion_data_path}")
