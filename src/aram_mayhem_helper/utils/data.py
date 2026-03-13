@@ -76,9 +76,18 @@ class ChampionAugmentData:
                 / Path(config.get("crawler", "opgg", "aram_augment", "save_directory"))
                 / f"{self.champion_id}.json"
             )
-            with open(champion_data_path, "r", encoding="utf-8") as f:
-                # 2. 读取并解析 JSON 数据
-                self.champion_augment_data = json.load(f)
+            try:
+                with open(champion_data_path, "r", encoding="utf-8") as f:
+                    self.champion_augment_data = json.load(f)
+            except FileNotFoundError:
+                self.logger.error(f"未找到英雄符文数据文件: {champion_data_path}")
+                raise
+            except json.JSONDecodeError as e:
+                self.logger.error(f"英雄符文数据文件格式错误: {champion_data_path}, 错误: {str(e)}")
+                raise
+            except Exception as e:
+                self.logger.error(f"读取英雄符文数据文件时发生错误: {champion_data_path}, 错误: {str(e)}")
+                raise
         return self.champion_augment_data["data"]
 
 
@@ -89,8 +98,15 @@ class AugmentTool:
         self.name_id_dict = {}
         trans_file = config.data_path / "augment_trans.json"
         if trans_file.exists():
-            with open(trans_file, "r", encoding="utf-8") as f:
-                self.id_name_dict = json.load(f)
+            try:
+                with open(trans_file, "r", encoding="utf-8") as f:
+                    self.id_name_dict = json.load(f)
+            except json.JSONDecodeError as e:
+                self.logger.error(f"翻译文件格式错误: {trans_file}, 错误: {str(e)}")
+                raise
+            except Exception as e:
+                self.logger.error(f"读取翻译文件时发生错误: {trans_file}, 错误: {str(e)}")
+                raise
         else:
             self.logger.warning(f"未找到翻译文件: {trans_file}")
         for aug_id, info in self.id_name_dict.items():

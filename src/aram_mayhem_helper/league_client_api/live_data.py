@@ -1,8 +1,12 @@
+import logging
+
 import requests
 import urllib3
 
 # 禁用 SSL 警告（游戏客户端用自签名证书）
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+logger = logging.getLogger(__name__)
 
 
 def get_current_champion_name():
@@ -26,7 +30,7 @@ def get_current_champion_name():
         # 2. 提取用户riotId（召唤师名称）
         riotId = all_data.get("activePlayer").get("riotId")
         if not riotId:
-            print("未获取到riotId")
+            logger.error("未获取到riotId")
             return None
 
         raw_champion_name = None
@@ -41,10 +45,10 @@ def get_current_champion_name():
         return champion_name
 
     except requests.exceptions.ConnectionError:
-        print("无法连接到游戏客户端，请确保：\n1. 已进入对局\n2. 已开启“允许第三方应用访问游戏数据”")
+        logger.error('无法连接到游戏客户端，请确保：\n1. 已进入对局\n2. 已开启"允许第三方应用访问游戏数据"')
         return None
     except Exception as e:
-        print(f"获取数据失败: {str(e)}")
+        logger.error(f"获取数据失败: {str(e)}")
         return None
 
 

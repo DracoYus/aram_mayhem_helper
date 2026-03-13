@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 import requests
 
 from aram_mayhem_helper.utils.config import config
+from aram_mayhem_helper.utils.retry import retry_on_exception
 
 
 class ChampionCrawler:
@@ -37,6 +38,7 @@ class ChampionCrawler:
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
+    @retry_on_exception(max_retries=3, delay=1.0, backoff_factor=2.0, exceptions=(requests.RequestException,))
     def fetch_json(self, url: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[Any, Any]]:
         """
         从指定URL获取JSON数据

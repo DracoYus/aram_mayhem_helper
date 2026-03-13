@@ -5,6 +5,8 @@ import numpy as np
 from paddleocr import PaddleOCR
 from PIL import ImageGrab
 
+from aram_mayhem_helper.utils.retry import retry_on_exception
+
 
 class OCRTool:
     """
@@ -50,6 +52,7 @@ class OCRTool:
         except Exception as e:
             raise RuntimeError(f"屏幕截图失败: {str(e)}")
 
+    @retry_on_exception(max_retries=2, delay=0.5, backoff_factor=1.5, exceptions=(RuntimeError,))
     def recognize_text(self, image: Union[np.ndarray, str]) -> List[dict]:
         """
         识别图像中的文本

@@ -8,7 +8,7 @@ from aram_mayhem_helper.ocr.ocr_tool import ocr_tool
 from aram_mayhem_helper.utils.data import champion_augment_data_dict, data
 from aram_mayhem_helper.utils.log_config import setup_logging
 
-current_champion_idd = None
+current_champion_id = None
 suggest = None
 
 

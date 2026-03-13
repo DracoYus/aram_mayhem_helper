@@ -105,7 +105,9 @@ class Suggest:
             else:
                 message = f"垃圾符文: {augment['name']}，别选，太垃圾了"
             message += (
-                f"，{augment['rank']}/{augments_num}，表现: {augment['performance']}，流行度: {augment['popular']}"
+                f"，{augment['rank']}/{augments_num}"
+                f"，表现: {augment['performance_norm']}"
+                f"，流行度: {augment['popular_norm']}"
             )
             result.append(message)
 

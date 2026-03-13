@@ -10,6 +10,7 @@ import requests
 
 from aram_mayhem_helper.utils.config import config
 from aram_mayhem_helper.utils.data import data
+from aram_mayhem_helper.utils.retry import retry_on_exception
 
 
 class AramAugmentCrawler:
@@ -38,6 +39,7 @@ class AramAugmentCrawler:
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
+    @retry_on_exception(max_retries=3, delay=1.0, backoff_factor=2.0, exceptions=(requests.RequestException,))
     def fetch_json(self, url: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[Any, Any]]:
         """
         从指定URL获取JSON数据
@@ -128,16 +130,16 @@ class AramAugmentCrawler:
         fail_count = 0
 
         all_champion_data = data.get_all_champion_data()
-        chamoion_id_list = [int(champion["key"]) for champion in all_champion_data.values()]
-        chamoion_id_list.sort()
-        for chamoion_id in chamoion_id_list:
-            if chamoion_id < start_id or chamoion_id > end_id:
+        champion_id_list = [int(champion["key"]) for champion in all_champion_data.values()]
+        champion_id_list.sort()
+        for champion_id in champion_id_list:
+            if champion_id < start_id or champion_id > end_id:
                 continue
-            url = self.base_url.format(chamoion_id)
-            filename = f"{chamoion_id}"
+            url = self.base_url.format(champion_id)
+            filename = f"{champion_id}"
             results[filename] = self.crawl_and_save(url, filename)
             if not results[filename]:
-                failed_ids.append(chamoion_id)
+                failed_ids.append(champion_id)
                 fail_count += 1
             if fail_count >= 10:
                 self.logger.warning(f"连续{fail_count}个英雄ID爬取失败，已停止爬取")
