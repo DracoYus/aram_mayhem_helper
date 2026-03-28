@@ -1,3 +1,4 @@
+import ctypes
 import logging
 from typing import List, Optional, Tuple, Union
 
@@ -27,6 +28,14 @@ class OCRTool:
         self.use_gpu = use_gpu
         self.show_log = show_log
         self.logger = logging.getLogger(__name__)
+        self.user32 = ctypes.windll.user32
+        self.screen_width = self.user32.GetSystemMetrics(0)
+        self.screen_height = self.user32.GetSystemMetrics(1)
+        self.REGIONS = [
+            (0.24, 0.37, 0.39, 0.42),  # 第一个符文位置
+            (0.42, 0.37, 0.57, 0.42),  # 第二个符文位置
+            (0.61, 0.37, 0.76, 0.42),  # 第三个符文位置
+        ]
 
         # 初始化 PaddleOCR 模型（懒加载，首次调用时才真正加载）
         self._ocr: Optional[PaddleOCR] = PaddleOCR(
@@ -85,17 +94,22 @@ class OCRTool:
         :return: 识别结果列表，格式同 recognize_text()
         """
         img_array = self.capture_screen(bbox)
-        return self.recognize_text(img_array)
+        return self.recognize_text(img_array)[0]
+
+    def _pct_to_pixel(self, bbox_pct: Tuple[float, float, float, float]) -> Tuple[int, int, int, int]:
+        return (
+            int(bbox_pct[0] * self.screen_width),
+            int(bbox_pct[1] * self.screen_height),
+            int(bbox_pct[2] * self.screen_width),
+            int(bbox_pct[3] * self.screen_height),
+        )
 
     def get_augments(self) -> List[str]:
         """
         获取当前屏幕中的符文选项
         :return: 获取到的符文选项列表
         """
-        result = []
-        result.extend(self.capture_and_recognize((940, 835, 1475, 895)))
-        result.extend(self.capture_and_recognize((1645, 835, 2180, 895)))
-        result.extend(self.capture_and_recognize((2355, 835, 2890, 895)))
+        result = [self.capture_and_recognize(self._pct_to_pixel(regin)) for regin in self.REGIONS]
         text_list = [item["text"].strip() for item in result]
         self.logger.info(f"识别到符文选项: {text_list}")
         return text_list
