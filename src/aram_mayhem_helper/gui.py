@@ -65,7 +65,7 @@ def create_gui():
     # 1. 创建主窗口
     root = tk.Tk()
     root.title("LOL海克斯乱斗工具")
-    root.geometry("800x400")  # 扩大窗口，容纳日志区域
+    root.geometry("1200x600")  # 扩大窗口，容纳日志区域
     root.resizable(False, False)
 
     # 2. 创建按钮框架（放置两个功能按钮）

@@ -16,7 +16,7 @@ def aram_augment_crawler() -> None:
     爬取英雄符文数据入口
     """
     crawler = AramAugmentCrawler()
-    crawler.batch_crawl(17, 20)
+    crawler.batch_crawl(1, 999)
 
 
 def champion_crawler() -> None:

@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 from paddleocr import PaddleOCR
 from PIL import ImageGrab
+from screeninfo import get_monitors
 
 from aram_mayhem_helper.utils.retry import retry_on_exception
 
@@ -29,8 +30,8 @@ class OCRTool:
         self.show_log = show_log
         self.logger = logging.getLogger(__name__)
         self.user32 = ctypes.windll.user32
-        self.screen_width = self.user32.GetSystemMetrics(0)
-        self.screen_height = self.user32.GetSystemMetrics(1)
+        self.screen_width = get_monitors()[0].width
+        self.screen_height = get_monitors()[0].height
         self.REGIONS = [
             (0.24, 0.37, 0.39, 0.42),  # 第一个符文位置
             (0.42, 0.37, 0.57, 0.42),  # 第二个符文位置
