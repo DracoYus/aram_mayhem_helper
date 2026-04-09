@@ -57,6 +57,12 @@ cd aram-mayhem-helper
 uv sync
 ```
 
+注册模块：
+
+```bash
+uv pip install -e .
+```
+
 ### 4. 配置说明
 
 配置文件位于 `config/config.toml`，可根据需要调整：
@@ -79,19 +85,19 @@ consider_select_precentage_threshold = 0.3          # 考虑百分比阈值
 
 ```bash
 # 运行主程序（识别英雄并推荐符文）
-uv run aram_mayhem_helper.cli main
+uv run python -m aram_mayhem_helper.cli main
 
 # 爬取英雄数据
-uv run aram_mayhem_helper.cli champion_crawler
+uv run python -m aram_mayhem_helper.cli champion-crawler
 
 # 爬取符文数据
-uv run aram_mayhem_helper.cli aram_augment_crawler
+uv run python -m aram_mayhem_helper.cli aram-augment-crawler
 ```
 
 ### 图形界面模式 (GUI)
 
 ```bash
-uv run aram_mayhem_helper.gui
+uv run python -m aram_mayhem_helper.gui
 ```
 
 GUI界面提供以下功能：
