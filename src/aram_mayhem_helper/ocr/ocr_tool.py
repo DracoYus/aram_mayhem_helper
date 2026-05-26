@@ -88,14 +88,16 @@ class OCRTool:
                 )
         return parsed_result
 
-    def capture_and_recognize(self, bbox: Tuple[int, int, int, int]) -> List[dict]:
+    def capture_and_recognize(self, bbox: Tuple[int, int, int, int]) -> str:
         """
         截取屏幕指定区域并识别文本（一体化方法）
         :param bbox: 屏幕区域坐标 (left, top, right, bottom)
-        :return: 识别结果列表，格式同 recognize_text()
+        :return: 区域内所有识别文本拼接后的完整字符串
         """
         img_array = self.capture_screen(bbox)
-        return self.recognize_text(img_array)[0]
+        results = self.recognize_text(img_array)
+        texts = [item["text"].strip() for item in results]
+        return "".join(texts)
 
     def _pct_to_pixel(self, bbox_pct: Tuple[float, float, float, float]) -> Tuple[int, int, int, int]:
         return (
@@ -110,8 +112,7 @@ class OCRTool:
         获取当前屏幕中的符文选项
         :return: 获取到的符文选项列表
         """
-        result = [self.capture_and_recognize(self._pct_to_pixel(regin)) for regin in self.REGIONS]
-        text_list = [item["text"].strip() for item in result]
+        text_list = [self.capture_and_recognize(self._pct_to_pixel(regin)) for regin in self.REGIONS]
         self.logger.info(f"识别到符文选项: {text_list}")
         return text_list
 
