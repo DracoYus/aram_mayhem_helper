@@ -28,16 +28,17 @@ def get_current_champion_name():
         all_data = active_player_resp.json()
 
         # 2. 提取用户riotId（召唤师名称）
-        riotId = all_data.get("activePlayer").get("riotId")
-        if not riotId:
+        active_player = all_data.get("activePlayer") or {}
+        riot_id = active_player.get("riotId")
+        if not riot_id:
             logger.error("未获取到riotId")
             return None
 
         raw_champion_name = None
         # 3.找到自己的英雄名称（通过 summonerName 匹配）
-        all_players = all_data.get("allPlayers")
+        all_players = all_data.get("allPlayers") or []
         for player in all_players:
-            if player.get("riotId") == riotId:
+            if player.get("riotId") == riot_id:
                 raw_champion_name = player.get("rawChampionName")
                 break
 

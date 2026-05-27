@@ -49,15 +49,16 @@ def recognize_champion(log_area):
 def recognize_augment(log_area):
     """识别符文和展示结果"""
     print_log("开始执行「识别符文」操作...", log_area)
+    augments = None
     try:
-        # 模拟你的数据导出逻辑
         augments = ocr_tool.get_augments()
         augments_info = suggest.suggest(augments)
         for augment_info in augments_info:
             print_log(str(augment_info), log_area)
     except Exception as e:
         print_log(f"「识别符文」操作出错：{str(e)}", log_area)
-        print_log(str(augments), log_area)
+        if augments is not None:
+            print_log(str(augments), log_area)
 
 
 # ====================== 第三步：创建完整GUI（按钮+日志区域） ======================

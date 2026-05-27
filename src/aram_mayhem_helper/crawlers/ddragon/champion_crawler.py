@@ -107,10 +107,10 @@ class ChampionCrawler:
 
         if data is not None:
             # 保存数据
-            self.save_to_file(data, filename)
+            return self.save_to_file(data, filename)
         else:
             self.logger.error(f"未能从 {url} 获取有效数据")
-        return data
+            return False
 
     def get_latest_ddragon_version(self) -> str:
         url = "https://ddragon.leagueoflegends.com/api/versions.json"
