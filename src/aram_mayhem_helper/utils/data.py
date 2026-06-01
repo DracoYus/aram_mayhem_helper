@@ -6,6 +6,7 @@ from typing import Dict
 import requests
 
 from aram_mayhem_helper.utils.config import config
+from aram_mayhem_helper.utils.text_normalization import normalize_text
 
 
 class Data:
@@ -114,9 +115,11 @@ class AugmentTool:
 
     def get_augment_id(self, augment_name: str) -> str | None:
         """根据符文名称获取符文ID"""
-        augment_info = self.name_id_dict.get(augment_name, None)
+        normalized_name = normalize_text(augment_name)
+        augment_info = self.name_id_dict.get(normalized_name, None)
         if augment_info:
             return augment_info["id"]
+        return None
 
     def get_augment_info(self, augment_id: str) -> dict | None:
         """根据符文名称获取符文ID"""
