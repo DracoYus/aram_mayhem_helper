@@ -22,6 +22,9 @@ class Suggest:
         for item in self.champion_augment_data:
             # 根据符文级别对符文进行分组
             augment_info = augment_tool.get_augment_info(str(item["id"]))
+            if not augment_info:
+                self.logger.warning(f"英雄id:{champion_augment_data.champion_id}，无法识别符文: {item}")
+                continue
             level = augment_info["level"]
             item["level"] = level
             item["name"] = augment_info["name"]
