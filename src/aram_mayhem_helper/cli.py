@@ -54,7 +54,13 @@ def main() -> None:
     champion_augment_data = champion_augment_data_dict[champion_id]
     suggest = Suggest(champion_augment_data)
     arguments = ocr_tool.get_augments()
-    suggest.suggest(arguments)
+    results = suggest.suggest(arguments)
+    if results:
+        for result in results:
+            print(result)
+            logger.info(result)
+    else:
+        logger.warning("未能生成任何符文建议")
     logger.info("主程序执行完成")
 
 

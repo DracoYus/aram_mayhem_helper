@@ -15,15 +15,31 @@ class Suggest:
         self.logger = logging.getLogger(__name__)
 
         raw_champion_augment_data = champion_augment_data.get_champion_augment_data()
-        self.champion_augment_data = [
-            item for item in raw_champion_augment_data if (item["performance"] != 170 and item["popular"] != 0)
-        ]
+        filtered_data = []
+        for item in raw_champion_augment_data:
+            perf = item.get("performance")
+            pop = item.get("popular")
+            if perf is None or pop is None:
+                self.logger.warning(
+                    f"英雄id:{champion_augment_data.champion_id}，符文数据项缺少 performance/popular 字段: {item}"
+                )
+                continue
+            if perf == 170 and pop == 0:
+                continue
+            filtered_data.append(item)
+        self.champion_augment_data = filtered_data
         self.augment_group = {}
         for item in self.champion_augment_data:
             # 根据符文级别对符文进行分组
-            augment_info = augment_tool.get_augment_info(str(item["id"]))
+            item_id = item.get("id")
+            if item_id is None:
+                self.logger.warning(f"英雄id:{champion_augment_data.champion_id}，符文数据项缺少 'id' 字段: {item}")
+                continue
+            augment_info = augment_tool.get_augment_info(str(item_id))
             if not augment_info:
-                self.logger.warning(f"英雄id:{champion_augment_data.champion_id}，无法识别符文: {item}")
+                self.logger.warning(
+                    f"英雄id:{champion_augment_data.champion_id}，翻译文件中未找到符文 ID {item_id} 的翻译: {item}"
+                )
                 continue
             level = augment_info["level"]
             item["level"] = level
@@ -46,7 +62,7 @@ class Suggest:
                 item["rank"] = idx + 1
                 item["group_size"] = group_size
 
-    def get_augment_info_by_id(self, augment_id: str) -> dict:
+    def get_augment_info_by_id(self, augment_id: str) -> dict | None:
         """
         使用符文id查询对应符文信息
 
@@ -54,11 +70,15 @@ class Suggest:
             augment_id (str): 符文id
 
         Returns:
-            dict: 符文信息
+            dict | None: 符文信息，未找到时返回 None
         """
+        if not augment_id:
+            return None
         for item in self.champion_augment_data:
-            if str(item["id"]) == augment_id:
+            item_id = item.get("id")
+            if item_id is not None and str(item_id) == augment_id:
                 return item
+        return None
 
     def suggest(self, augments: list[str]) -> list:
         """
@@ -70,48 +90,66 @@ class Suggest:
         Returns:
             list: 操作推荐
         """
-        augment_ids = [augment_tool.get_augment_id(augment) for augment in augments]
-        augment_info = [self.get_augment_info_by_id(augment_id) for augment_id in augment_ids]
+        augment_info = []
+        for augment in augments:
+            augment_id = augment_tool.get_augment_id(augment)
+            if not augment_id:
+                self.logger.warning(f"无法识别符文名称 '{augment}'，翻译文件中未找到匹配")
+                continue
+            info = self.get_augment_info_by_id(augment_id)
+            if not info:
+                self.logger.warning(f"符文 ID {augment_id} (OCR名称: '{augment}') 在当前英雄数据中未找到")
+                continue
+            augment_info.append(info)
+        if not augment_info:
+            self.logger.warning("没有有效的符文信息可供建议")
+            return []
         result = self.get_suggest_info(augment_info)
         return result
 
-    def get_suggest_info(self, augments: list[str]) -> list:
+    def get_suggest_info(self, augments: list[dict]) -> list:
         """
         根据输入符文信息，给出操作推荐
 
         Args:
-            augments (list[str]): 输入符文信息
+            augments (list[dict]): 输入符文信息
 
         Returns:
             list: 操作推荐
         """
-        augments_num = augments[0]["group_size"]
+        if not augments:
+            return []
+        first = augments[0]
+        if first is None:
+            self.logger.warning("符文信息列表首元素为 None，无法生成建议")
+            return []
+        augments_num = first.get("group_size")
+        if augments_num is None:
+            self.logger.warning("符文数据缺少 'group_size' 字段，无法生成建议")
+            return []
         immediate_select_rank_threshold = augments_num * Suggest.immediate_select_precentage_threshold
         consider_select_rank_threshold = augments_num * Suggest.consider_select_precentage_threshold
-        max_weighted_sum = max(item["weighted_sum"] for item in augments)
+        max_weighted_sum = max(item.get("weighted_sum", 0) for item in augments if item is not None)
         result = []
         for augment in augments:
+            if augment is None:
+                continue
+            name = augment.get("name", "未知")
+            rank = augment.get("rank", augments_num)
+            ws = augment.get("weighted_sum", 0)
+            perf_norm = augment.get("performance_norm", "N/A")
+            pop_norm = augment.get("popular_norm", "N/A")
             message = None
-            if (
-                augment["rank"] <= immediate_select_rank_threshold
-                or augment["weighted_sum"] >= Suggest.immediate_select_weighted_sum_threshold
-            ):
-                message = f"快选符文：{augment['name']}，别的不用看了"
-            elif (
-                augment["rank"] <= consider_select_rank_threshold
-                or augment["weighted_sum"] >= Suggest.consider_select_weighted_sum_threshold
-            ):
-                if max_weighted_sum == augment["weighted_sum"]:
-                    message = f"考虑符文：{augment['name']}，暂时先别换"
+            if rank <= immediate_select_rank_threshold or ws >= Suggest.immediate_select_weighted_sum_threshold:
+                message = f"快选符文：{name}，别的不用看了"
+            elif rank <= consider_select_rank_threshold or ws >= Suggest.consider_select_weighted_sum_threshold:
+                if max_weighted_sum == ws:
+                    message = f"考虑符文：{name}，暂时先别换"
                 else:
-                    message = f"考虑符文：{augment['name']}，可以随掉"
+                    message = f"考虑符文：{name}，可以随掉"
             else:
-                message = f"垃圾符文: {augment['name']}，别选，太垃圾了"
-            message += (
-                f"，{augment['rank']}/{augments_num}"
-                f"，表现: {augment['performance_norm']}"
-                f"，流行度: {augment['popular_norm']}"
-            )
+                message = f"垃圾符文: {name}，别选，太垃圾了"
+            message += f"，{rank}/{augments_num}，表现: {perf_norm}，流行度: {pop_norm}"
             result.append(message)
 
         return result

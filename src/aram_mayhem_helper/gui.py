@@ -38,7 +38,16 @@ def recognize_champion(log_area):
 
     try:
         champion_name = get_current_champion_name()
+        if not champion_name:
+            print_log("无法获取当前英雄名称，请确保游戏正在运行", log_area)
+            return
         current_champion_id = data.get_champion_id_by_name(champion_name)
+        if not current_champion_id:
+            print_log(f"无法找到英雄 '{champion_name}' 对应的ID", log_area)
+            return
+        if current_champion_id not in champion_augment_data_dict:
+            print_log(f"英雄ID {current_champion_id} ({champion_name}) 的符文数据不存在", log_area)
+            return
         champion_augment_data = champion_augment_data_dict[current_champion_id]
         suggest = Suggest(champion_augment_data)
         print_log(f"当前英雄：{champion_name}", log_area)
@@ -49,6 +58,9 @@ def recognize_champion(log_area):
 def recognize_augment(log_area):
     """识别符文和展示结果"""
     print_log("开始执行「识别符文」操作...", log_area)
+    if suggest is None:
+        print_log("请先执行「识别英雄」操作", log_area)
+        return
     augments = None
     try:
         augments = ocr_tool.get_augments()

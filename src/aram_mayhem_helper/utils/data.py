@@ -89,7 +89,11 @@ class ChampionAugmentData:
             except Exception as e:
                 self.logger.error(f"读取英雄符文数据文件时发生错误: {champion_data_path}, 错误: {str(e)}")
                 raise
-        return self.champion_augment_data["data"]
+        data = self.champion_augment_data.get("data")
+        if data is None:
+            self.logger.warning(f"英雄符文数据文件缺少 'data' 字段: champion_id={self.champion_id}")
+            return []
+        return data
 
 
 class AugmentTool:
@@ -111,7 +115,15 @@ class AugmentTool:
         else:
             self.logger.warning(f"未找到翻译文件: {trans_file}")
         for aug_id, info in self.id_name_dict.items():
-            self.name_id_dict[info["name"]] = {"id": aug_id, "level": info["level"]}
+            name = info.get("name")
+            level = info.get("level")
+            if not name:
+                self.logger.warning(f"翻译文件中符文 ID {aug_id} 缺少 'name' 字段，已跳过")
+                continue
+            if level is None:
+                self.logger.warning(f"翻译文件中符文 ID {aug_id}({name}) 缺少 'level' 字段，已跳过")
+                continue
+            self.name_id_dict[name] = {"id": aug_id, "level": level}
 
     def get_augment_id(self, augment_name: str) -> str | None:
         """根据符文名称获取符文ID"""
