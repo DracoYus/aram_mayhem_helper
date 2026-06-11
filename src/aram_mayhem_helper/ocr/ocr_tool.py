@@ -38,7 +38,7 @@ class OCRTool:
             (0.61, 0.37, 0.76, 0.42),  # 第三个符文位置
         ]
 
-        # 初始化 PaddleOCR 模型（懒加载，首次调用时才真正加载）
+        # 初始化 PaddleOCR 模型
         self._ocr: Optional[PaddleOCR] = PaddleOCR(
             use_angle_cls=self.use_angle_cls,
             lang=self.lang,
