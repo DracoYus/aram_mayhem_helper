@@ -62,6 +62,15 @@ class Data:
         self.logger.warning(f"未找到英雄名称 '{champion_name}' 对应的 ID")
         return None
 
+    def get_champion_name_by_id(self, champion_id: str) -> str | None:
+        """根据英雄 ID（key）获取英雄名称"""
+        champion_data = self.get_all_champion_data()
+        for champ_info in champion_data.values():
+            if champ_info["key"] == champion_id:
+                return champ_info["name"]
+        self.logger.warning(f"未找到英雄 ID '{champion_id}' 对应的名称")
+        return None
+
 
 class ChampionAugmentData:
     def __init__(self, champion_id: str):
@@ -137,6 +146,61 @@ class AugmentTool:
         """根据符文名称获取符文ID"""
         return self.id_name_dict.get(augment_id, None)
 
+    def ensure_augment_entry(self, augment_id: str, context: dict | None = None) -> None:
+        """确保翻译文件中存在指定符文 ID 的条目，缺失时自动添加占位符。
+
+        name 和 level 均使用占位符填充，需后续手动修改。
+        同时更新内存字典并写回翻译文件。
+
+        Args:
+            augment_id: 符文 ID（字符串形式）
+            context: 可选上下文信息，用于日志输出。
+                     可包含 ``champion_id``, ``performance``, ``popular`` 字段。
+        """
+        if augment_id in self.id_name_dict:
+            return
+
+        placeholder_name = f"待翻译 ID:{augment_id}"
+        entry = {"name": placeholder_name, "level": "待填写"}
+
+        self.id_name_dict[augment_id] = entry
+        self.name_id_dict[placeholder_name] = {"id": augment_id, "level": "待填写"}
+
+        extra = ""
+        if context:
+            parts = []
+            champion_label = context.get("champion_name") or context.get("champion_id")
+            if champion_label:
+                parts.append(f"英雄={champion_label}")
+            if "performance" in context:
+                parts.append(
+                    f"表现={context['performance']:.1f}"
+                    if isinstance(context.get("performance"), (int, float))
+                    else f"表现={context['performance']}"
+                )
+            if "popular" in context:
+                parts.append(
+                    f"流行={context['popular']:.1f}"
+                    if isinstance(context.get("popular"), (int, float))
+                    else f"流行={context['popular']}"
+                )
+            if parts:
+                extra = f" ({', '.join(parts)})"
+        self.logger.warning(
+            f'翻译文件中缺少符文 ID {augment_id} 的翻译{extra}，已自动添加占位符: "{placeholder_name}"，请后续手动修改'
+        )
+        self._save_trans_file()
+
+    def _save_trans_file(self) -> None:
+        """将当前 in-memory 翻译数据按 ID 排序后写回 augment_trans.json。"""
+        trans_file = config.data_path / "augment_trans.json"
+        try:
+            sorted_dict = {k: self.id_name_dict[k] for k in sorted(self.id_name_dict, key=int)}
+            with open(trans_file, "w", encoding="utf-8") as f:
+                json.dump(sorted_dict, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            self.logger.error(f"保存翻译文件时发生错误: {trans_file}, 错误: {str(e)}")
+
 
 data = Data()
 champion_augment_data_dict = {}
@@ -145,11 +209,103 @@ for champion, champion_info in data.get_all_champion_data().items():
 augment_tool = AugmentTool()
 
 
+def _scan_and_fill_missing_translations() -> None:
+    """Scan all champion augment data files for untranslated augment IDs.
+
+    Auto-adds placeholder entries for missing IDs, then prints a summary
+    of all augment entries that still have placeholder names (both new and
+    pre-existing) to assist manual translation.
+    """
+    logger = logging.getLogger(__name__)
+    augment_data_dir = config.data_path / config.get("crawler", "opgg", "aram_augment", "save_directory")
+    if not augment_data_dir.exists():
+        return
+
+    seen_ids: set[str] = set()
+    new_count = 0
+    placeholder_contexts: dict[str, dict] = {}
+
+    for file_path in augment_data_dir.iterdir():
+        if not file_path.is_file() or not file_path.suffix == ".json":
+            continue
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+        except Exception:
+            continue
+
+        entries = raw.get("data", [])
+        for entry in entries:
+            item_id = entry.get("id")
+            if item_id is None:
+                continue
+            aug_id = str(item_id)
+            if aug_id in seen_ids:
+                continue
+            seen_ids.add(aug_id)
+
+            # Record context from the first champion that uses this augment
+            if aug_id not in placeholder_contexts:
+                champion_id = file_path.stem
+                placeholder_contexts[aug_id] = {
+                    "champion_id": champion_id,
+                    "champion_name": data.get_champion_name_by_id(champion_id),
+                    "performance": entry.get("performance", "N/A"),
+                    "popular": entry.get("popular", "N/A"),
+                }
+
+            if aug_id not in augment_tool.id_name_dict:
+                augment_tool.ensure_augment_entry(aug_id, placeholder_contexts[aug_id])
+                new_count += 1
+
+    if new_count > 0:
+        logger.info(f"翻译文件扫描完成，新增 {new_count} 个占位符条目")
+
+    # Print summary of ALL placeholder entries
+    pending = [
+        (aug_id, info)
+        for aug_id, info in augment_tool.id_name_dict.items()
+        if info.get("name", "").startswith("待翻译")
+    ]
+    if pending:
+        logger.info(f"共 {len(pending)} 个符文待翻译，按英雄/流行度/表现排序：")
+
+        def _sort_key(item: tuple[str, dict]) -> tuple[int, str, float, float]:
+            aug_id, _info = item
+            ctx = placeholder_contexts.get(aug_id)
+            if not ctx:
+                return (1, "", 0.0, 0.0)
+            label = ctx.get("champion_name") or ctx.get("champion_id", "")
+            pop = ctx.get("popular", 0)
+            perf = ctx.get("performance", 0)
+            pop_val = -float(pop) if isinstance(pop, (int, float)) else 0.0
+            perf_val = -float(perf) if isinstance(perf, (int, float)) else 0.0
+            return (0, label, pop_val, perf_val)
+
+        for aug_id, info in sorted(pending, key=_sort_key):
+            ctx = placeholder_contexts.get(aug_id)
+            if ctx:
+                champion_label = ctx.get("champion_name") or ctx.get("champion_id", "?")
+                perf = ctx.get("performance", "N/A")
+                pop = ctx.get("popular", "N/A")
+                perf_str = f"{perf:.1f}" if isinstance(perf, (int, float)) else perf
+                pop_str = f"{pop:.1f}" if isinstance(pop, (int, float)) else pop
+                logger.info(
+                    f"  ID:{aug_id}  level={info['level']}  "
+                    f"示例: 英雄={champion_label}  表现={perf_str}  流行={pop_str}"
+                )
+            else:
+                logger.info(f"  ID:{aug_id}  level={info['level']}")
+
+
 def reload_data() -> None:
     """Reload champion and augment data from disk after crawling.
 
     Mutates existing singleton objects in-place so that all modules
     that imported them (gui.py, suggest.py) see updated data without re-importing.
+
+    Also scans all champion augment data for augment IDs that are missing from
+    the translation file and auto-adds placeholder entries.
     """
     # Force Data to re-read from disk by clearing its internal caches
     data.champion_data = {}
@@ -161,13 +317,10 @@ def reload_data() -> None:
     for champion, champion_info in data.get_all_champion_data().items():
         champion_augment_data_dict[champion_info["key"]] = ChampionAugmentData(champion_info["key"])
 
-    # augment_tool does NOT need reloading — augment_trans.json is never modified by crawlers
+    # Scan all champion augment data for missing translations
+    _scan_and_fill_missing_translations()
 
 
 if __name__ == "__main__":
-    data = Data()
-    print(data.get_game_version())
-    print(data.get_all_champion_data())
-    print(data.get_champion_id_by_name("Smolder"))
-    augment_tool = AugmentTool()
-    print(augment_tool.get_augment_id("老练狙神"))
+    logging.basicConfig(level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s")
+    reload_data()

@@ -1,7 +1,7 @@
 import logging
 
 from aram_mayhem_helper.utils.config import config
-from aram_mayhem_helper.utils.data import ChampionAugmentData, augment_tool
+from aram_mayhem_helper.utils.data import ChampionAugmentData, augment_tool, data
 from aram_mayhem_helper.utils.norm import add_normalized_attr, add_weighted_sum_attr
 
 
@@ -38,9 +38,24 @@ class Suggest:
             augment_info = augment_tool.get_augment_info(str(item_id))
             if not augment_info:
                 self.logger.warning(
-                    f"英雄id:{champion_augment_data.champion_id}，翻译文件中未找到符文 ID {item_id} 的翻译: {item}"
+                    f"英雄id:{champion_augment_data.champion_id}，"
+                    f"翻译文件中未找到符文 ID {item_id} 的翻译，将自动添加占位符"
                 )
-                continue
+                champion_name = data.get_champion_name_by_id(champion_augment_data.champion_id)
+                context = {
+                    "champion_id": champion_augment_data.champion_id,
+                    "champion_name": champion_name,
+                    "performance": item.get("performance", "N/A"),
+                    "popular": item.get("popular", "N/A"),
+                }
+                augment_tool.ensure_augment_entry(str(item_id), context)
+                augment_info = augment_tool.get_augment_info(str(item_id))
+                if not augment_info:
+                    self.logger.error(
+                        f"英雄id:{champion_augment_data.champion_id}，"
+                        f"自动添加占位符后仍无法获取符文 ID {item_id} 的信息，跳过"
+                    )
+                    continue
             level = augment_info["level"]
             item["level"] = level
             item["name"] = augment_info["name"]
@@ -163,7 +178,7 @@ if __name__ == "__main__":
     #     champion_augment_data = ChampionAugmentData(champion_id)
     #     suggest = Suggest(champion_augment_data)
     #     suggest.suggest(["老练狙神", "红包", "吞噬灵魂"])
-    champion_augment_data = ChampionAugmentData(99)
+    champion_augment_data = ChampionAugmentData("99")
     suggest = Suggest(champion_augment_data)
     suggests = suggest.suggest(["老练狙神", "红包", "吞噬灵魂"])
     print(suggests)

@@ -1,4 +1,7 @@
 .venv/
 __pycache__/
-data/
+data/ddragon/
+data/opgg/
+!data/augment_trans.json
 logs/
+.claude/
