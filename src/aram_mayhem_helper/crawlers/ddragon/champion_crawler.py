@@ -21,11 +21,10 @@ class ChampionCrawler:
         Args:
             save_directory: 保存数据的目录，默认为'data'
         """
-        self.timeout = config.get("crawler", "timeout", 30)
-        self.delay_second = config.get("crawler", "delay_second", 1)
+        self.timeout = config.get("crawler", "timeout", default=30)
+        self.delay_second = config.get("crawler", "delay_second", default=1)
         self.save_directory = config.data_path / Path(config.get("crawler", "ddragon", "champion", "save_directory"))
         self.base_url = config.get("crawler", "ddragon", "champion", "base_url")
-        # self.game_version = config.get("crawler", "ddragon", "champion", "game_version")
         self.session = requests.Session()
 
         # 设置请求头
@@ -118,27 +117,20 @@ class ChampionCrawler:
         versions = response.json()
         return versions[0]  # 第一个元素是最新版本
 
-    def batch_crawl(self) -> Dict[str, bool]:
-        """
-        批量爬取多个URL
-
-        Args:
-            start_id: 起始英雄ID
-            end_id: 结束英雄ID
+    def crawl(self) -> bool:
+        """获取最新版本的英雄数据并保存到本地.
 
         Returns:
-            包含每个URL爬取结果的字典，键为英雄ID，值为爬取结果
+            成功返回 ``True``，否则返回 ``False``。
         """
-        self.logger.info("开始批量爬取英雄ID数据")
+        self.logger.info("开始爬取英雄数据")
 
         self.game_version = self.get_latest_ddragon_version()
         url = self.base_url.format(self.game_version)
         filename = f"{self.game_version}"
-        results = self.crawl_and_save(url, filename)
-
-        return results
+        return self.crawl_and_save(url, filename)
 
 
 if __name__ == "__main__":
     crawler = ChampionCrawler()
-    crawler.batch_crawl()
+    crawler.crawl()

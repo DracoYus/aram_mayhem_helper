@@ -144,6 +144,26 @@ for champion, champion_info in data.get_all_champion_data().items():
     champion_augment_data_dict[champion_info["key"]] = ChampionAugmentData(champion_info["key"])
 augment_tool = AugmentTool()
 
+
+def reload_data() -> None:
+    """Reload champion and augment data from disk after crawling.
+
+    Mutates existing singleton objects in-place so that all modules
+    that imported them (gui.py, suggest.py) see updated data without re-importing.
+    """
+    # Force Data to re-read from disk by clearing its internal caches
+    data.champion_data = {}
+    data.game_version = None
+    data.get_all_champion_data()
+
+    # Rebuild champion_augment_data_dict with fresh ChampionAugmentData instances
+    champion_augment_data_dict.clear()
+    for champion, champion_info in data.get_all_champion_data().items():
+        champion_augment_data_dict[champion_info["key"]] = ChampionAugmentData(champion_info["key"])
+
+    # augment_tool does NOT need reloading — augment_trans.json is never modified by crawlers
+
+
 if __name__ == "__main__":
     data = Data()
     print(data.get_game_version())

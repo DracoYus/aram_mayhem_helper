@@ -28,7 +28,7 @@ def champion_crawler() -> None:
     """
     logger.info("开始爬取英雄数据")
     crawler = ChampionCrawler()
-    crawler.batch_crawl()
+    crawler.crawl()
     logger.info("英雄数据爬取完成")
 
 
