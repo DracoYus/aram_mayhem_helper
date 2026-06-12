@@ -288,8 +288,8 @@ def _scan_and_fill_missing_translations() -> None:
                 champion_label = ctx.get("champion_name") or ctx.get("champion_id", "?")
                 perf = ctx.get("performance", "N/A")
                 pop = ctx.get("popular", "N/A")
-                perf_str = f"{perf:.1f}" if isinstance(perf, (int, float)) else perf
-                pop_str = f"{pop:.1f}" if isinstance(pop, (int, float)) else pop
+                perf_str = f"{perf:.2f}" if isinstance(perf, (int, float)) else perf
+                pop_str = f"{pop:.2f}" if isinstance(pop, (int, float)) else pop
                 logger.info(
                     f"  ID:{aug_id}  level={info['level']}  "
                     f"示例: 英雄={champion_label}  表现={perf_str}  流行={pop_str}"
