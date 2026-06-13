@@ -1,5 +1,7 @@
+import ctypes
 import logging
 import queue
+import sys
 import threading
 import time
 import tkinter as tk
@@ -32,6 +34,24 @@ def print_log(log_text: str, log_area: scrolledtext.ScrolledText) -> None:
     log_area.see(tk.END)  # 自动滚动到最新日志
     log_area.config(state=tk.DISABLED)  # 锁定日志区域，禁止手动编辑
     log_area.update()  # 实时刷新界面
+
+
+def _enable_dpi_awareness() -> None:
+    """Enable system DPI awareness on Windows to prevent blurry bitmap scaling.
+
+    Must be called **before** ``tk.Tk()`` is created.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+
+def _scaled(value: int, factor: float) -> int:
+    """Scale *value* by *factor*, minimum 1."""
+    return max(1, round(value * factor))
 
 
 class TkinterLogHandler(logging.Handler):
@@ -247,70 +267,102 @@ def fetch_augment_data(
 
 # ====================== 第四步：创建完整GUI（按钮+日志区域） ======================
 def create_gui() -> None:
-    # 1. 创建主窗口
+    _enable_dpi_awareness()
+
     root = tk.Tk()
     root.title("LOL海克斯乱斗工具")
-    root.geometry("1200x600")  # 扩大窗口，容纳日志区域
-    root.resizable(False, False)
 
-    # 2. 创建按钮框架（放置功能按钮和异步数据获取按钮）
-    btn_frame = tk.Frame(root)
-    btn_frame.pack(pady=10)  # 垂直间距10像素
+    # --- DPI-aware sizing ---
+    dpi = root.winfo_fpixels("1i")
+    scale = dpi / 96.0
 
-    # Row 0: 识别按钮
+    phys_w = root.winfo_screenwidth()
+    phys_h = root.winfo_screenheight()
+    eff_w = int(phys_w / scale)
+    eff_h = int(phys_h / scale)
+
+    # Window size: proportional to effective screen, with bounds
+    win_w = max(600, min(int(eff_w * 0.40), 1000))
+    win_h = max(400, min(int(eff_h * 0.38), 650))
+    x = (phys_w - win_w) // 2
+    y = (phys_h - win_h) // 2
+    root.geometry(f"{win_w}x{win_h}+{x}+{y}")
+    root.minsize(520, 340)
+
+    # Font sizes
+    btn_font = ("微软雅黑", max(9, min(round(12 * scale), 16)))
+    label_font = ("微软雅黑", max(8, min(round(10 * scale), 14)))
+    log_font = ("Consolas", max(8, min(round(9 * scale), 12)))
+
+    # Padding
+    pad_lg = _scaled(20, scale)
+    pad_md = _scaled(10, scale)
+    pad_sm = _scaled(5, scale)
+    pad_xs = _scaled(2, scale)
+
+    # --- Control area: two side-by-side groups ---
+    control_frame = tk.Frame(root)
+    control_frame.pack(pady=(pad_md, 0), padx=pad_lg, fill=tk.X)
+    control_frame.grid_columnconfigure(0, weight=1)
+    control_frame.grid_columnconfigure(1, weight=1)
+
+    # Left group: game actions
+    action_group = tk.LabelFrame(control_frame, text="游戏操作", font=label_font)
+    action_group.grid(row=0, column=0, padx=(0, pad_sm), pady=pad_sm, sticky="nsew")
+
     btn1 = tk.Button(
-        btn_frame,
+        action_group,
         text="识别英雄",
-        command=lambda: recognize_champion(log_area),  # lambda传递参数给函数
-        width=15,
-        height=2,
-        font=("微软雅黑", 12),
+        command=lambda: recognize_champion(log_area),
+        font=btn_font,
     )
-    btn1.grid(row=0, column=0, padx=20)  # 网格布局，水平间距20
+    btn1.pack(fill=tk.X, padx=pad_sm, pady=pad_xs)
 
     btn2 = tk.Button(
-        btn_frame,
+        action_group,
         text="识别符文",
         command=lambda: recognize_augment(log_area),
-        width=15,
-        height=2,
-        font=("微软雅黑", 12),
+        font=btn_font,
     )
-    btn2.grid(row=0, column=1, padx=20)
+    btn2.pack(fill=tk.X, padx=pad_sm, pady=pad_xs)
 
-    # Row 1: 异步数据获取按钮 + 页码输入
-    crawl_section = tk.Frame(btn_frame)
-    crawl_section.grid(row=1, column=0, columnspan=2, pady=10)
+    # Right group: data crawling
+    data_group = tk.LabelFrame(control_frame, text="数据抓取", font=label_font)
+    data_group.grid(row=0, column=1, padx=(pad_sm, 0), pady=pad_sm, sticky="nsew")
 
     btn3 = tk.Button(
-        crawl_section,
+        data_group,
         text="获取英雄数据",
-        width=15,
-        height=2,
-        font=("微软雅黑", 12),
+        font=btn_font,
     )
-    btn3.pack(side=tk.LEFT, padx=10)
+    btn3.pack(fill=tk.X, padx=pad_sm, pady=pad_xs)
 
     btn4 = tk.Button(
-        crawl_section,
+        data_group,
         text="获取符文数据",
-        width=15,
-        height=2,
-        font=("微软雅黑", 12),
+        font=btn_font,
     )
-    btn4.pack(side=tk.LEFT, padx=10)
+    btn4.pack(fill=tk.X, padx=pad_sm, pady=pad_xs)
 
-    tk.Label(crawl_section, text="起始页:", font=("微软雅黑", 10)).pack(side=tk.LEFT, padx=(20, 2))
-    start_entry = tk.Entry(crawl_section, width=5, font=("微软雅黑", 10))
+    # Page range inputs at bottom of data group
+    page_row = tk.Frame(data_group)
+    page_row.pack(fill=tk.X, padx=pad_sm, pady=pad_xs)
+
+    tk.Label(page_row, text="起始页:", font=label_font).pack(side=tk.LEFT, padx=(0, pad_xs))
+    start_entry = tk.Entry(page_row, width=5, font=label_font)
     start_entry.insert(0, "1")
-    start_entry.pack(side=tk.LEFT, padx=2)
+    start_entry.pack(side=tk.LEFT, padx=(0, pad_sm))
 
-    tk.Label(crawl_section, text="结束页:", font=("微软雅黑", 10)).pack(side=tk.LEFT, padx=(10, 2))
-    end_entry = tk.Entry(crawl_section, width=5, font=("微软雅黑", 10))
+    tk.Label(page_row, text="结束页:", font=label_font).pack(side=tk.LEFT, padx=(0, pad_xs))
+    end_entry = tk.Entry(page_row, width=5, font=label_font)
     end_entry.insert(0, "999")
-    end_entry.pack(side=tk.LEFT, padx=2)
+    end_entry.pack(side=tk.LEFT)
 
     crawl_buttons = [btn3, btn4]
+
+    # --- Separator between controls and log ---
+    separator = tk.Frame(root, height=_scaled(2, scale), bd=1, relief=tk.SUNKEN)
+    separator.pack(fill=tk.X, padx=pad_lg, pady=(pad_md, 0))
 
     def _on_fetch_champion() -> None:
         fetch_champion_data(log_area, crawl_buttons)
@@ -327,18 +379,16 @@ def create_gui() -> None:
     btn3.config(command=_on_fetch_champion)
     btn4.config(command=_on_fetch_augment)
 
-    # 3. 创建日志输出区域（带滚动条，只读）
-    log_label = tk.Label(root, text="运行日志：", font=("微软雅黑", 10))
-    log_label.pack(anchor="w", padx=20)  # 左对齐，水平间距20
+    # 3. 日志输出区域（带滚动条，只读，填充剩余空间）
+    log_label = tk.Label(root, text="运行日志：", font=label_font)
+    log_label.pack(anchor="w", padx=pad_lg, pady=(pad_sm, 0))
 
     log_area = scrolledtext.ScrolledText(
         root,
-        width=120,  # 宽度（字符数）
-        height=15,  # 高度（行数）
-        font=("Consolas", 9),  # 等宽字体，适合日志
-        state=tk.DISABLED,  # 初始锁定，禁止编辑
+        font=log_font,
+        state=tk.DISABLED,
     )
-    log_area.pack(padx=20, pady=5)  # 边距
+    log_area.pack(padx=pad_lg, pady=pad_sm, fill=tk.BOTH, expand=True)
 
     # 初始化日志
     print_log("GUI已启动，等待执行操作...", log_area)
