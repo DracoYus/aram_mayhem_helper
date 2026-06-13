@@ -11,6 +11,10 @@
 - 根据当前英雄和符文数据，智能推荐最优符文选择
 - 支持命令行（CLI）和图形界面（GUI）两种交互方式
 
+## 效果展示
+
+![GUI 运行截图](docs/images/screenshot.png)
+
 ## 工作流程
 
 1. **数据爬取**: 从OP.GG和Data Dragon API爬取英雄和符文数据
