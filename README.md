@@ -9,7 +9,7 @@
 
 - 通过OCR识别游戏中的符文选项
 - 根据当前英雄和符文数据，智能推荐最优符文选择
-- 支持命令行（CLI）和图形界面（GUI）两种交互方式
+- 支持命令行（CLI）、图形界面（GUI）和网页（Web）三种交互方式
 
 ## 效果展示
 
@@ -96,6 +96,9 @@ uv run python -m aram_mayhem_helper.cli champion-crawler
 
 # 爬取符文数据
 uv run python -m aram_mayhem_helper.cli aram-augment-crawler
+
+# 启动网页应用，浏览符文数据
+uv run python -m aram_mayhem_helper.cli web
 ```
 
 ### 图形界面模式 (GUI)
@@ -110,12 +113,29 @@ GUI界面提供以下功能：
 - **识别符文**: 点击按钮识别屏幕上的符文选项并显示推荐结果
 - **实时日志**: 界面下方显示运行日志
 
+### 网页模式 (Web)
+
+```bash
+uv run python -m aram_mayhem_helper.cli web
+# 可选参数: --host 127.0.0.1 --port 5000
+```
+
+浏览器打开 `http://127.0.0.1:5000` 即可使用。
+
+网页界面提供以下功能：
+
+- **英雄列表**: 首页展示所有已缓存英雄的卡片网格，支持搜索
+- **符文详情**: 点击英雄查看该英雄的全部符文数据及综合评分
+- **多维排序**: 支持按符文名称、等级、表现、流行度、综合评分排序
+- **灵活筛选**: 支持按等级（0/1/2）、最低表现、最低流行度筛选
+
 ## 技术栈
 
 - **Python**: 3.12
 - **OCR识别**: PaddleOCR 2.9.1
 - **深度学习框架**: PaddlePaddle 2.6.2
 - **HTTP请求**: requests
+- **Web框架**: Flask
 - **GUI框架**: tkinter
 - **数据处理**: numpy
 - **配置管理**: TOML

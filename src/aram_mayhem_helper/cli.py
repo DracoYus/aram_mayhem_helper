@@ -82,6 +82,11 @@ def parse_args() -> argparse.Namespace:
     # main 命令
     subparsers.add_parser("main", help="执行主程序，截图并推荐")
 
+    # web 命令
+    web_parser = subparsers.add_parser("web", help="启动网页应用，浏览符文数据")
+    web_parser.add_argument("--host", type=str, default="127.0.0.1", help="监听地址，默认 127.0.0.1")
+    web_parser.add_argument("--port", type=int, default=5000, help="监听端口，默认 5000")
+
     return parser.parse_args()
 
 
@@ -95,9 +100,15 @@ if __name__ == "__main__":
         champion_crawler()
     elif args.command == "main":
         main()
+    elif args.command == "web":
+        from aram_mayhem_helper.web import app
+
+        logger.info(f"启动网页应用 at http://{args.host}:{args.port}")
+        app.run(host=args.host, port=args.port, debug=False)
     else:
         logger.error("请指定要执行的命令")
         print("使用方法:")
         print("  python -m aram_mayhem_helper.cli aram-augment-crawler [--start-page START_PAGE] [--end-page END_PAGE]")
         print("  python -m aram_mayhem_helper.cli champion-crawler")
         print("  python -m aram_mayhem_helper.cli main")
+        print("  python -m aram_mayhem_helper.cli web [--host HOST] [--port PORT]")

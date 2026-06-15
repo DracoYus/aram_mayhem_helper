@@ -21,6 +21,9 @@ uv run python -m aram_mayhem_helper.cli aram-augment-crawler --start-page 1 --en
 # GUI mode (tkinter)
 uv run python -m aram_mayhem_helper.gui
 
+# Web — browse cached champion augment data
+uv run python -m aram_mayhem_helper.cli web
+
 # Lint and format
 uv run ruff check src/
 uv run ruff format src/
@@ -28,10 +31,11 @@ uv run ruff format src/
 
 ## Architecture
 
-```
+```text
 src/aram_mayhem_helper/
 ├── cli.py              # CLI entry point with argparse subcommands
 ├── gui.py              # Tkinter GUI (two buttons + log area)
+├── web.py              # Flask web app — champion list + per-champion augment table
 ├── algorithm/
 │   └── suggest.py      # Core: augment recommendation engine
 ├── crawlers/
@@ -67,6 +71,13 @@ src/aram_mayhem_helper/
 
 - `champion-crawler`: Fetches `https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/champion.json` → saves to `data/ddragon/champions/{version}.json`
 - `aram-augment-crawler`: Iterates champion IDs, fetches `https://lol-api-champion.op.gg/api/contents/stats/champions/{id}/aram-augments` → saves to `data/opgg/aram_augments/{id}.json`
+
+**Web flow:**
+
+- `GET /` serves a single-page app (inline HTML rendered via `render_template_string`)
+- Home page shows a champion card grid from `GET /api/champions` (returns champion ID, name, augment count)
+- Clicking a champion calls `GET /api/champions/<id>/augments` → `_build_champion_augments()` applies the same IQR min-max normalization + weighted-sum logic as `Suggest`, then returns per-champion records with `augment_name` resolved from `augment_tool`
+- Detail view supports sorting by any column, level checkboxes, and min-performance/min-popularity numeric filters
 
 ## Important Details
 
