@@ -3,5 +3,6 @@ __pycache__/
 data/ddragon/
 data/opgg/
 !data/augment_trans.json
+deploy/data/
 logs/
 .claude/

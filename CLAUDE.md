@@ -24,6 +24,9 @@ uv run python -m aram_mayhem_helper.gui
 # Web — browse cached champion augment data
 uv run python -m aram_mayhem_helper.cli web
 
+# Deploy — build standalone web app package (no PaddleOCR needed)
+python deploy/build.py
+
 # Lint and format
 uv run ruff check src/
 uv run ruff format src/

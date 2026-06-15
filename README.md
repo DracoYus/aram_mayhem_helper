@@ -129,6 +129,24 @@ uv run python -m aram_mayhem_helper.cli web
 - **多维排序**: 支持按符文名称、等级、表现、流行度、综合评分排序
 - **灵活筛选**: 支持按等级（0/1/2）、最低表现、最低流行度筛选
 
+### 独立部署 (低性能服务器)
+
+Web 应用可脱离完整项目独立部署，仅需 `flask` + `numpy`（约 50MB），无需 PaddleOCR/PaddlePaddle（~2GB）。
+
+```bash
+# 1. 构建部署包（复制数据文件）
+python deploy/build.py
+
+# 2. 安装依赖并启动
+cd deploy
+pip install -r requirements.txt
+python app.py
+
+# 3. 或使用 Docker
+docker build -t aram-web deploy/
+docker run -p 5000:5000 aram-web
+```
+
 ## 技术栈
 
 - **Python**: 3.12
