@@ -69,7 +69,8 @@ class Suggest:
             group_data["number"] = len(group_data["augments"])
             add_normalized_attr(grouped_augments, "performance", "performance_norm", "min-max", True)
             add_normalized_attr(grouped_augments, "popular", "popular_norm", "min-max", False)
-            add_weighted_sum_attr(grouped_augments, "performance_norm", "popular_norm", 0.7, 0.3, "weighted_sum")
+            add_weighted_sum_attr(grouped_augments, "performance_norm", "popular_norm", 0.8, 0.2, "weighted_sum")
+            add_normalized_attr(grouped_augments, "weighted_sum", "weighted_sum", "min-max", False)
             #  对每个组进行排序，统计名次
             sorted_group_data = sorted(grouped_augments, key=lambda x: x["weighted_sum"], reverse=True)
             group_data["augments"] = sorted_group_data

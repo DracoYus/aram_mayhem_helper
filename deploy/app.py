@@ -221,7 +221,8 @@ def build_champion_augments(champion_id: str) -> list[dict]:
         try:
             add_normalized_attr(level_items, "performance", "performance_norm", "min-max", True)
             add_normalized_attr(level_items, "popular", "popular_norm", "min-max", False)
-            add_weighted_sum_attr(level_items, "performance_norm", "popular_norm", 0.7, 0.3, "weighted_sum")
+            add_weighted_sum_attr(level_items, "performance_norm", "popular_norm", 0.8, 0.2, "weighted_sum")
+            add_normalized_attr(level_items, "weighted_sum", "weighted_sum", "min-max", True)
         except (KeyError, TypeError, ValueError) as e:
             logger.warning(f"英雄 {cname} 等级 {level} 归一化失败: {e}")
 
