@@ -278,21 +278,31 @@ def create_gui() -> None:
 
     phys_w = root.winfo_screenwidth()
     phys_h = root.winfo_screenheight()
-    eff_w = int(phys_w / scale)
-    eff_h = int(phys_h / scale)
 
-    # Window size: proportional to effective screen, with bounds
-    win_w = max(600, min(int(eff_w * 0.40), 1000))
-    win_h = max(400, min(int(eff_h * 0.38), 650))
+    # Use the smaller screen dimension as the reference to keep consistent
+    # visual proportions regardless of aspect ratio.
+    ref_dim = min(phys_w, phys_h)
+
+    # Window size: scale a base 800×520 design (at 96 DPI, ~1080p screen)
+    # so the window occupies a similar fraction of the screen at any DPI.
+    base_w, base_h = 600, 380
+    size_scale = ref_dim / 1080  # 1080 is the reference shorter-side at FHD
+    win_w = int(base_w * size_scale)
+    win_h = int(base_h * size_scale)
+
+    # Clamp: never smaller than the base design, never larger than 85 % of screen
+    win_w = max(_scaled(600, scale), min(win_w, int(phys_w * 0.85)))
+    win_h = max(_scaled(300, scale), min(win_h, int(phys_h * 0.85)))
+
     x = (phys_w - win_w) // 2
     y = (phys_h - win_h) // 2
     root.geometry(f"{win_w}x{win_h}+{x}+{y}")
-    root.minsize(520, 340)
+    root.minsize(_scaled(600, scale), _scaled(300, scale))
 
     # Font sizes
-    btn_font = ("微软雅黑", max(9, min(round(12 * scale), 16)))
-    label_font = ("微软雅黑", max(8, min(round(10 * scale), 14)))
-    log_font = ("Consolas", max(8, min(round(9 * scale), 12)))
+    btn_font = ("微软雅黑", max(7, min(round(7 * scale), 14)))
+    label_font = ("微软雅黑", max(6, min(round(6 * scale), 12)))
+    log_font = ("Consolas", max(7, min(round(7 * scale), 14)))
 
     # Padding
     pad_lg = _scaled(20, scale)
@@ -359,10 +369,6 @@ def create_gui() -> None:
     end_entry.pack(side=tk.LEFT)
 
     crawl_buttons = [btn3, btn4]
-
-    # --- Separator between controls and log ---
-    separator = tk.Frame(root, height=_scaled(2, scale), bd=1, relief=tk.SUNKEN)
-    separator.pack(fill=tk.X, padx=pad_lg, pady=(pad_md, 0))
 
     def _on_fetch_champion() -> None:
         fetch_champion_data(log_area, crawl_buttons)
