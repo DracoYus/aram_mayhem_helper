@@ -27,6 +27,33 @@ def _load_champion_i18n() -> dict[str, dict]:
 
 _champion_i18n: dict[str, dict] = _load_champion_i18n()
 
+# ── Augment descriptions ───────────────────────────────────────────────────
+
+
+def _load_augment_descriptions() -> dict[str, dict]:
+    path = config.data_path / "aram-mayhem-augments.zh_cn.json"
+    if path.exists():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"读取符文描述文件失败: {e}")
+    return {}
+
+
+_augment_descriptions: dict[str, dict] = _load_augment_descriptions()
+
+
+def _augment_description(augment_id: str) -> str:
+    """Return cleaned description text for an augment."""
+    import re
+
+    info = _augment_descriptions.get(augment_id, {})
+    desc = info.get("description", "") or info.get("tooltip", "")
+    # Strip pseudo-HTML tags like <scaleAF>, <attention>, <keyword>, etc.
+    desc = re.sub(r"<[^>]+>", "", desc)
+    return desc
+
 
 def _champion_display_name(champion_id: str) -> str:
     """Return Chinese display title for a champion."""
@@ -90,6 +117,7 @@ def _build_champion_augments(champion_id: str) -> list[dict]:
             "champion_alias": _champion_alias(champion_id),
             "augment_id": str(item_id),
             "augment_name": augment_name,
+            "description": _augment_description(str(item_id)),
             "level": level,
             "performance": perf,
             "popular": pop,
@@ -232,6 +260,16 @@ PAGE_HTML = r"""<!DOCTYPE html>
   th .arrow { font-size: 0.7rem; margin-left: 4px; opacity: 0.4; }
   th.sorted .arrow { opacity: 1; }
   td { padding: 8px 14px; border-bottom: 1px solid #0f3460; white-space: nowrap; }
+  .aug-name { cursor: help; }
+  #tooltip {
+    display: none; position: fixed; z-index: 9999;
+    max-width: 360px; padding: 8px 12px;
+    background: #0f3460; color: #e0e0e0; font-size: 0.8rem;
+    border: 1px solid #e94560; border-radius: 6px;
+    white-space: normal; word-break: break-word;
+    pointer-events: none; line-height: 1.5;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  }
   tr:hover td { background: rgba(233, 69, 96, 0.06); }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
   .level-badge {
@@ -274,7 +312,8 @@ PAGE_HTML = r"""<!DOCTYPE html>
     </span>
     <span class="count-label" id="detailCount" style="margin-left:auto"></span>
   </div>
-  <div class="table-wrap">
+  <div id="tooltip"></div>
+<div class="table-wrap">
     <table id="dataTable">
       <thead>
         <tr>
@@ -377,7 +416,7 @@ function renderDetail() {
     const perf = d.performance != null ? d.performance.toFixed(1) : '-';
     const pop = d.popular != null ? d.popular.toFixed(1) : '-';
     return `<tr>
-      <td>${escHtml(d.augment_name)}</td>
+      <td><span data-tooltip="${escHtml(d.description || '')}" class="aug-name">${escHtml(d.augment_name)}</span></td>
       <td><span class="level-badge level-${d.level}">${d.level}</span></td>
       <td class="num">${perf}</td>
       <td class="num">${pop}</td>
@@ -399,6 +438,29 @@ function escHtml(s) {
   el.textContent = s;
   return el.innerHTML;
 }
+
+// --- Tooltip (fixed-position, element-relative, never clipped) ---
+const tooltip = document.getElementById('tooltip');
+document.querySelector('#dataTable tbody').addEventListener('mouseenter', e => {
+  const span = e.target.closest('span[data-tooltip]');
+  if (!span) return;
+  tooltip.textContent = span.dataset.tooltip;
+  tooltip.style.display = 'block';
+  const rect = span.getBoundingClientRect();
+  const gap = 6;
+  let top = rect.top - tooltip.offsetHeight - gap;
+  if (top < 0) top = rect.bottom + gap;
+  let left = rect.left;
+  if (left + tooltip.offsetWidth > window.innerWidth) left = window.innerWidth - tooltip.offsetWidth - gap;
+  if (left < gap) left = gap;
+  tooltip.style.left = left + 'px';
+  tooltip.style.top = top + 'px';
+}, true);
+document.querySelector('#dataTable tbody').addEventListener('mouseleave', e => {
+  const span = e.target.closest('span[data-tooltip]');
+  if (!span) return;
+  tooltip.style.display = 'none';
+}, true);
 
 // --- Event listeners ---
 document.getElementById('champSearch').addEventListener('input', renderChampionGrid);

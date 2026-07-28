@@ -18,6 +18,7 @@ CHAMPIONS_DIR = DATA_DIR / "ddragon" / "champions"
 AUGMENTS_DIR = DATA_DIR / "opgg" / "aram_augments"
 TRANS_FILE = DATA_DIR / "augment_trans.json"
 I18N_FILE = DATA_DIR / "champions-names-i18n.json"
+AUG_DESC_FILE = DATA_DIR / "aram-mayhem-augments.zh_cn.json"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -141,13 +142,38 @@ def champion_alias(cid: str) -> str:
     return info.get("alias", "")
 
 
+def _load_augment_descriptions() -> dict[str, dict]:
+    if AUG_DESC_FILE.exists():
+        try:
+            return json.loads(AUG_DESC_FILE.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning(f"读取符文描述文件失败: {e}")
+    return {}
+
+
+AUGMENT_DESCRIPTIONS: dict[str, dict] = {}
+
+
+def augment_description(aug_id: str) -> str:
+    """Return cleaned description text for an augment."""
+    import re
+
+    info = AUGMENT_DESCRIPTIONS.get(aug_id, {})
+    desc = info.get("description", "") or info.get("tooltip", "")
+    return re.sub(r"<[^>]+>", "", desc)
+
+
 def init_data() -> None:
     """Pre-load champion names and augment translations into memory."""
-    global CHAMPION_NAMES, CHAMPION_I18N, AUGMENT_TRANS
+    global CHAMPION_NAMES, CHAMPION_I18N, AUGMENT_TRANS, AUGMENT_DESCRIPTIONS
     CHAMPION_NAMES = _build_champion_id_name_map()
     CHAMPION_I18N = _load_champion_i18n()
     AUGMENT_TRANS = _load_augment_trans()
-    logger.info(f"已加载 {len(CHAMPION_NAMES)} 个英雄, {len(CHAMPION_I18N)} 条 i18n, {len(AUGMENT_TRANS)} 条符文翻译")
+    AUGMENT_DESCRIPTIONS = _load_augment_descriptions()
+    logger.info(
+        f"已加载 {len(CHAMPION_NAMES)} 个英雄, {len(CHAMPION_I18N)} 条 i18n, "
+        f"{len(AUGMENT_TRANS)} 条符文翻译, {len(AUGMENT_DESCRIPTIONS)} 条符文描述"
+    )
 
 
 def get_champion_name(cid: str) -> str | None:
@@ -243,6 +269,7 @@ def build_champion_augments(champion_id: str) -> list[dict]:
             "champion_alias": champion_alias(champion_id),
             "augment_id": str(item_id),
             "augment_name": augment_name,
+            "description": augment_description(str(item_id)),
             "level": level,
             "performance": perf,
             "popular": pop,
@@ -358,6 +385,16 @@ PAGE_HTML = r"""<!DOCTYPE html>
   th .arrow { font-size: 0.7rem; margin-left: 4px; opacity: 0.4; }
   th.sorted .arrow { opacity: 1; }
   td { padding: 8px 14px; border-bottom: 1px solid #0f3460; white-space: nowrap; }
+  .aug-name { cursor: help; }
+  #tooltip {
+    display: none; position: fixed; z-index: 9999;
+    max-width: 360px; padding: 8px 12px;
+    background: #0f3460; color: #e0e0e0; font-size: 0.8rem;
+    border: 1px solid #e94560; border-radius: 6px;
+    white-space: normal; word-break: break-word;
+    pointer-events: none; line-height: 1.5;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  }
   tr:hover td { background: rgba(233, 69, 96, 0.06); }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
   .level-badge {
@@ -400,7 +437,8 @@ PAGE_HTML = r"""<!DOCTYPE html>
     </span>
     <span class="count-label" id="detailCount" style="margin-left:auto"></span>
   </div>
-  <div class="table-wrap">
+  <div id="tooltip"></div>
+<div class="table-wrap">
     <table id="dataTable">
       <thead>
         <tr>
@@ -503,7 +541,7 @@ function renderDetail() {
     const perf = d.performance != null ? d.performance.toFixed(1) : '-';
     const pop = d.popular != null ? d.popular.toFixed(1) : '-';
     return `<tr>
-      <td>${escHtml(d.augment_name)}</td>
+      <td><span data-tooltip="${escHtml(d.description || '')}" class="aug-name">${escHtml(d.augment_name)}</span></td>
       <td><span class="level-badge level-${d.level}">${d.level}</span></td>
       <td class="num">${perf}</td>
       <td class="num">${pop}</td>
@@ -525,6 +563,29 @@ function escHtml(s) {
   el.textContent = s;
   return el.innerHTML;
 }
+
+// --- Tooltip (fixed-position, element-relative, never clipped) ---
+const tooltip = document.getElementById('tooltip');
+document.querySelector('#dataTable tbody').addEventListener('mouseenter', e => {
+  const span = e.target.closest('span[data-tooltip]');
+  if (!span) return;
+  tooltip.textContent = span.dataset.tooltip;
+  tooltip.style.display = 'block';
+  const rect = span.getBoundingClientRect();
+  const gap = 6;
+  let top = rect.top - tooltip.offsetHeight - gap;
+  if (top < 0) top = rect.bottom + gap;
+  let left = rect.left;
+  if (left + tooltip.offsetWidth > window.innerWidth) left = window.innerWidth - tooltip.offsetWidth - gap;
+  if (left < gap) left = gap;
+  tooltip.style.left = left + 'px';
+  tooltip.style.top = top + 'px';
+}, true);
+document.querySelector('#dataTable tbody').addEventListener('mouseleave', e => {
+  const span = e.target.closest('span[data-tooltip]');
+  if (!span) return;
+  tooltip.style.display = 'none';
+}, true);
 
 // --- Event listeners ---
 document.getElementById('champSearch').addEventListener('input', renderChampionGrid);

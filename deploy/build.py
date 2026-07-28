@@ -14,6 +14,7 @@ SRC_CHAMPIONS = ROOT / "data" / "ddragon" / "champions"
 SRC_AUGMENTS = ROOT / "data" / "opgg" / "aram_augments"
 SRC_TRANS = ROOT / "data" / "augment_trans.json"
 SRC_CHAMPION_I18N = ROOT / "data" / "champions-names-i18n.json"
+SRC_AUGMENT_DESC = ROOT / "data" / "aram-mayhem-augments.zh_cn.json"
 
 
 def main() -> None:
@@ -48,6 +49,9 @@ def main() -> None:
     if SRC_CHAMPION_I18N.exists():
         shutil.copy2(SRC_CHAMPION_I18N, DEPLOY_DATA / "champions-names-i18n.json")
         print("已复制英雄 i18n 文件")
+    if SRC_AUGMENT_DESC.exists():
+        shutil.copy2(SRC_AUGMENT_DESC, DEPLOY_DATA / "aram-mayhem-augments.zh_cn.json")
+        print("已复制符文描述文件")
 
     print("\n构建完成！部署步骤：")
     print("  1. cd deploy")
