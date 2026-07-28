@@ -4,8 +4,9 @@ import logging
 
 from flask import Flask, jsonify, render_template_string
 
+from aram_mayhem_helper.utils.config import config
 from aram_mayhem_helper.utils.data import augment_tool, champion_augment_data_dict, data
-from aram_mayhem_helper.utils.norm import add_normalized_attr, add_weighted_sum_attr
+from aram_mayhem_helper.utils.norm import add_bayesian_sigmoid_score_attr
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ def _build_champion_augments(champion_id: str) -> list[dict]:
         pop = entry.get("popular")
         if perf is None or pop is None:
             continue
-        if perf == 170 and pop == 0:
+        if pop == 0:
             continue
 
         item_id = entry.get("id")
@@ -66,10 +67,14 @@ def _build_champion_augments(champion_id: str) -> list[dict]:
 
     for level, level_items in by_level.items():
         try:
-            add_normalized_attr(level_items, "performance", "performance_norm", "min-max", True)
-            add_normalized_attr(level_items, "popular", "popular_norm", "min-max", False)
-            add_weighted_sum_attr(level_items, "performance_norm", "popular_norm", 0.8, 0.2, "weighted_sum")
-            add_normalized_attr(level_items, "weighted_sum", "weighted_sum", "min-max", True)
+            add_bayesian_sigmoid_score_attr(
+                level_items,
+                perf_attr="performance",
+                pop_attr="popular",
+                new_attr="weighted_sum",
+                tau_factor=config.get("suggest", "shrinkage_tau_factor"),
+                sigmoid_steepness=config.get("suggest", "sigmoid_steepness"),
+            )
         except (KeyError, TypeError, ValueError) as e:
             logger.warning(f"英雄 {champion_name} 等级 {level} 的符文数据归一化失败: {e}")
 
@@ -92,10 +97,7 @@ def _build_champion_list() -> list[dict]:
                 count = sum(
                     1
                     for e in entries
-                    if e.get("performance") is not None
-                    and e.get("popular") is not None
-                    and not (e.get("performance") == 170 and e.get("popular") == 0)
-                    and e.get("id") is not None
+                    if e.get("performance") is not None and e.get("popular", 0) != 0 and e.get("id") is not None
                 )
             except Exception:
                 count = 0

@@ -23,51 +23,54 @@ logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Normalization (inlined from aram_mayhem_helper.utils.norm)
+# Normalization — Bayesian shrinkage + sigmoid squash (inlined)
 # ═══════════════════════════════════════════════════════════════════════════
 
-
-def _get_normal_min_max(values: list) -> dict:
-    arr = np.array(values)
-    q1 = np.percentile(arr, 25)
-    q3 = np.percentile(arr, 75)
-    iqr = q3 - q1
-    lower_bound = q1 - 1.5 * iqr
-    upper_bound = q3 + 1.5 * iqr
-    normal_mask = (arr >= lower_bound) & (arr <= upper_bound)
-    normal_values = arr[normal_mask]
-    if len(normal_values) == 0:
-        normal_values = arr
-    return {"min": normal_values.min(), "max": normal_values.max()}
+# Configurable defaults (no TOML dependency in standalone deploy)
+SHRINKAGE_TAU_FACTOR = 0.5
+SIGMOID_STEEPNESS = 1.0
 
 
-def _min_max_normalize(values: list, min_max_norm: bool) -> dict:
-    if min_max_norm:
-        norm_params = _get_normal_min_max(values)
-        min_val = norm_params["min"]
-        max_val = norm_params["max"]
-    else:
-        min_val = min(values)
-        max_val = max(values)
-    if max_val == min_val:
-        return {"normalize_func": lambda x: 0.0}
-    return {"normalize_func": lambda x: (x - min_val) / (max_val - min_val)}
-
-
-def add_normalized_attr(
-    data_list: list, src_attr: str, new_attr: str, normalize_type: str = "min-max", min_max_norm: bool = True
+def add_bayesian_sigmoid_score_attr(
+    data_list: list,
+    perf_attr: str = "performance",
+    pop_attr: str = "popular",
+    new_attr: str = "weighted_sum",
+    tau_factor: float = SHRINKAGE_TAU_FACTOR,
+    sigmoid_steepness: float = SIGMOID_STEEPNESS,
 ) -> None:
-    src_values = [item[src_attr] for item in data_list]
-    norm_info = _min_max_normalize(src_values, min_max_norm)
-    for item in data_list:
-        item[new_attr] = round(norm_info["normalize_func"](item[src_attr]), 4)
+    """Bayesian shrinkage + sigmoid squash into [0,1] in one pass.
 
+    Auto-tau: τ = median(pop > 0) × tau_factor
+    Shrinkage: adjusted = (pop/(pop+τ))×perf + (τ/(pop+τ))×level_mean
+    Sigmoid: final = 1 / (1 + exp(-(adjusted - level_mean) / (level_std × steepness)))
+    """
+    if not data_list:
+        raise ValueError("data_list is empty")
 
-def add_weighted_sum_attr(
-    data_list: list, attr1: str, attr2: str, weight1: float, weight2: float, new_attr: str
-) -> None:
+    perf_arr = np.array([float(item[perf_attr]) for item in data_list])
+    pop_arr = np.array([float(item[pop_attr]) for item in data_list])
+
+    level_mean = float(np.average(perf_arr, weights=pop_arr))
+    level_var = float(np.average((perf_arr - level_mean) ** 2, weights=pop_arr))
+    level_std = float(np.sqrt(level_var))
+
+    if level_std == 0:
+        raise ValueError("performance std is 0")
+
+    positive_pop = pop_arr[pop_arr > 0]
+    tau = float(np.median(positive_pop)) * tau_factor if len(positive_pop) > 0 else 0.1 * tau_factor
+
     for item in data_list:
-        item[new_attr] = round(item[attr1] * weight1 + item[attr2] * weight2, 2)
+        perf = float(item[perf_attr])
+        pop = float(item[pop_attr])
+        denom = pop + tau
+        weight = pop / denom if denom > 0 else 0.0
+        adjusted = weight * perf + (1.0 - weight) * level_mean
+        divisor = level_std * sigmoid_steepness
+        z = (adjusted - level_mean) / divisor if divisor > 0 else 0.0
+        final_score = 1.0 / (1.0 + np.exp(-z))
+        item[new_attr] = round(float(final_score), 4)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -160,10 +163,7 @@ def build_champion_list() -> list[dict]:
             count = sum(
                 1
                 for e in entries
-                if e.get("performance") is not None
-                and e.get("popular") is not None
-                and not (e.get("performance") == 170 and e.get("popular") == 0)
-                and e.get("id") is not None
+                if e.get("performance") is not None and e.get("popular", 0) != 0 and e.get("id") is not None
             )
         except Exception:
             count = 0
@@ -191,7 +191,7 @@ def build_champion_augments(champion_id: str) -> list[dict]:
         pop = entry.get("popular")
         if perf is None or pop is None:
             continue
-        if perf == 170 and pop == 0:
+        if pop == 0:
             continue
 
         item_id = entry.get("id")
@@ -219,10 +219,14 @@ def build_champion_augments(champion_id: str) -> list[dict]:
 
     for level, level_items in by_level.items():
         try:
-            add_normalized_attr(level_items, "performance", "performance_norm", "min-max", True)
-            add_normalized_attr(level_items, "popular", "popular_norm", "min-max", False)
-            add_weighted_sum_attr(level_items, "performance_norm", "popular_norm", 0.8, 0.2, "weighted_sum")
-            add_normalized_attr(level_items, "weighted_sum", "weighted_sum", "min-max", True)
+            add_bayesian_sigmoid_score_attr(
+                level_items,
+                perf_attr="performance",
+                pop_attr="popular",
+                new_attr="weighted_sum",
+                tau_factor=SHRINKAGE_TAU_FACTOR,
+                sigmoid_steepness=SIGMOID_STEEPNESS,
+            )
         except (KeyError, TypeError, ValueError) as e:
             logger.warning(f"英雄 {cname} 等级 {level} 归一化失败: {e}")
 

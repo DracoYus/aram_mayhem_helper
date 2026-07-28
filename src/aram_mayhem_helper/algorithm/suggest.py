@@ -1,15 +1,17 @@
 import logging
 
 from aram_mayhem_helper.utils.config import config
-from aram_mayhem_helper.utils.data import ChampionAugmentData, augment_tool, data
-from aram_mayhem_helper.utils.norm import add_normalized_attr, add_weighted_sum_attr
+from aram_mayhem_helper.utils.data import ChampionAugmentData, augment_tool
+from aram_mayhem_helper.utils.norm import add_bayesian_sigmoid_score_attr
 
 
 class Suggest:
-    immediate_select_weighted_sum_threshold = config.get("suggest", "immediate_select_weighted_sum_threshold")
+    immediate_select_score_threshold = config.get("suggest", "immediate_select_score_threshold")
     immediate_select_precentage_threshold = config.get("suggest", "immediate_select_precentage_threshold")
-    consider_select_weighted_sum_threshold = config.get("suggest", "consider_select_weighted_sum_threshold")
+    consider_select_score_threshold = config.get("suggest", "consider_select_score_threshold")
     consider_select_precentage_threshold = config.get("suggest", "consider_select_precentage_threshold")
+    shrinkage_tau_factor = config.get("suggest", "shrinkage_tau_factor")
+    sigmoid_steepness = config.get("suggest", "sigmoid_steepness")
 
     def __init__(self, champion_augment_data: ChampionAugmentData):
         self.logger = logging.getLogger(__name__)
@@ -24,7 +26,7 @@ class Suggest:
                     f"英雄id:{champion_augment_data.champion_id}，符文数据项缺少 performance/popular 字段: {item}"
                 )
                 continue
-            if perf == 170 and pop == 0:
+            if pop == 0:
                 continue
             filtered_data.append(item)
         self.champion_augment_data = filtered_data
@@ -37,25 +39,7 @@ class Suggest:
                 continue
             augment_info = augment_tool.get_augment_info(str(item_id))
             if not augment_info:
-                self.logger.warning(
-                    f"英雄id:{champion_augment_data.champion_id}，"
-                    f"翻译文件中未找到符文 ID {item_id} 的翻译，将自动添加占位符"
-                )
-                champion_name = data.get_champion_name_by_id(champion_augment_data.champion_id)
-                context = {
-                    "champion_id": champion_augment_data.champion_id,
-                    "champion_name": champion_name,
-                    "performance": item.get("performance", "N/A"),
-                    "popular": item.get("popular", "N/A"),
-                }
-                augment_tool.ensure_augment_entry(str(item_id), context)
-                augment_info = augment_tool.get_augment_info(str(item_id))
-                if not augment_info:
-                    self.logger.error(
-                        f"英雄id:{champion_augment_data.champion_id}，"
-                        f"自动添加占位符后仍无法获取符文 ID {item_id} 的信息，跳过"
-                    )
-                    continue
+                continue
             level = augment_info["level"]
             item["level"] = level
             item["name"] = augment_info["name"]
@@ -66,11 +50,15 @@ class Suggest:
         for group_level, group_data in self.augment_group.items():
             grouped_augments = group_data["augments"]
             group_size = len(grouped_augments)
-            group_data["number"] = len(group_data["augments"])
-            add_normalized_attr(grouped_augments, "performance", "performance_norm", "min-max", True)
-            add_normalized_attr(grouped_augments, "popular", "popular_norm", "min-max", False)
-            add_weighted_sum_attr(grouped_augments, "performance_norm", "popular_norm", 0.8, 0.2, "weighted_sum")
-            add_normalized_attr(grouped_augments, "weighted_sum", "weighted_sum", "min-max", False)
+            group_data["number"] = group_size
+            add_bayesian_sigmoid_score_attr(
+                grouped_augments,
+                perf_attr="performance",
+                pop_attr="popular",
+                new_attr="weighted_sum",
+                tau_factor=Suggest.shrinkage_tau_factor,
+                sigmoid_steepness=Suggest.sigmoid_steepness,
+            )
             #  对每个组进行排序，统计名次
             sorted_group_data = sorted(grouped_augments, key=lambda x: x["weighted_sum"], reverse=True)
             group_data["augments"] = sorted_group_data
@@ -153,19 +141,19 @@ class Suggest:
             name = augment.get("name", "未知")
             rank = augment.get("rank", augments_num)
             ws = augment.get("weighted_sum", 0)
-            perf_norm = augment.get("performance_norm", "N/A")
-            pop_norm = augment.get("popular_norm", "N/A")
+            perf = augment.get("performance", "N/A")
+            pop = augment.get("popular", "N/A")
             message = None
-            if rank <= immediate_select_rank_threshold or ws >= Suggest.immediate_select_weighted_sum_threshold:
+            if rank <= immediate_select_rank_threshold or ws >= Suggest.immediate_select_score_threshold:
                 message = f"快选符文：{name}，别的不用看了"
-            elif rank <= consider_select_rank_threshold or ws >= Suggest.consider_select_weighted_sum_threshold:
+            elif rank <= consider_select_rank_threshold or ws >= Suggest.consider_select_score_threshold:
                 if max_weighted_sum == ws:
                     message = f"考虑符文：{name}，暂时先别换"
                 else:
                     message = f"考虑符文：{name}，可以随掉"
             else:
                 message = f"垃圾符文: {name}，别选，太垃圾了"
-            message += f"，{rank}/{augments_num}，表现: {perf_norm}，流行度: {pop_norm}"
+            message += f"，{rank}/{augments_num}，表现: {perf}，流行度: {pop}"
             result.append(message)
 
         return result

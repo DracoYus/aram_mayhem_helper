@@ -13,7 +13,14 @@ base_url = "https://ddragon.leagueoflegends.com/cdn/{0}/data/en_US/champion.json
 save_directory = "ddragon/champions/"
 
 [suggest]
-immediate_select_weighted_sum_threshold = 0.6
-immediate_select_precentage_threshold = 0.15
-consider_select_weighted_sum_threshold = 0.45
-consider_select_precentage_threshold = 0.3
+# 贝叶斯收缩参数：τ = median(pop > 0) × tau_factor
+# 越小越信任低出场率符文的原始表现
+shrinkage_tau_factor = 0.5
+# Sigmoid 陡峭度：>1 拉大分数差距，<1 压缩分数差距
+sigmoid_steepness = 1.0
+# 分数阈值（sigmoid 输出在 [0,1]，0.5 = 组平均水平，0.7 ≈ top 5）
+immediate_select_score_threshold = 0.70
+consider_select_score_threshold = 0.50
+# 排名阈值（百分比，0.1 ≈ 组内前 5 名）
+immediate_select_precentage_threshold = 0.10
+consider_select_precentage_threshold = 0.30
