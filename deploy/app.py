@@ -17,6 +17,7 @@ DATA_DIR = HERE / "data"
 CHAMPIONS_DIR = DATA_DIR / "ddragon" / "champions"
 AUGMENTS_DIR = DATA_DIR / "opgg" / "aram_augments"
 TRANS_FILE = DATA_DIR / "augment_trans.json"
+I18N_FILE = DATA_DIR / "champions-names-i18n.json"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -116,15 +117,37 @@ def _load_augment_trans() -> dict[str, dict]:
 
 # Module-level caches (populated once at startup)
 CHAMPION_NAMES: dict[str, str] = {}
+CHAMPION_I18N: dict[str, dict] = {}
 AUGMENT_TRANS: dict[str, dict] = {}
+
+
+def _load_champion_i18n() -> dict[str, dict]:
+    if I18N_FILE.exists():
+        try:
+            return json.loads(I18N_FILE.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning(f"读取英雄 i18n 文件失败: {e}")
+    return {}
+
+
+def champion_display_name(cid: str) -> str:
+    info = CHAMPION_I18N.get(cid, {})
+    titles = info.get("titles", {})
+    return titles.get("zh-CN", "") or info.get("alias", "")
+
+
+def champion_alias(cid: str) -> str:
+    info = CHAMPION_I18N.get(cid, {})
+    return info.get("alias", "")
 
 
 def init_data() -> None:
     """Pre-load champion names and augment translations into memory."""
-    global CHAMPION_NAMES, AUGMENT_TRANS
+    global CHAMPION_NAMES, CHAMPION_I18N, AUGMENT_TRANS
     CHAMPION_NAMES = _build_champion_id_name_map()
+    CHAMPION_I18N = _load_champion_i18n()
     AUGMENT_TRANS = _load_augment_trans()
-    logger.info(f"已加载 {len(CHAMPION_NAMES)} 个英雄, {len(AUGMENT_TRANS)} 条符文翻译")
+    logger.info(f"已加载 {len(CHAMPION_NAMES)} 个英雄, {len(CHAMPION_I18N)} 条 i18n, {len(AUGMENT_TRANS)} 条符文翻译")
 
 
 def get_champion_name(cid: str) -> str | None:
@@ -167,7 +190,15 @@ def build_champion_list() -> list[dict]:
             )
         except Exception:
             count = 0
-        champions.append({"champion_id": cid, "champion_name": cname, "augment_count": count})
+        champions.append(
+            {
+                "champion_id": cid,
+                "champion_name": cname,
+                "champion_name_cn": champion_display_name(cid),
+                "champion_alias": champion_alias(cid),
+                "augment_count": count,
+            }
+        )
     return champions
 
 
@@ -208,6 +239,8 @@ def build_champion_augments(champion_id: str) -> list[dict]:
         record = {
             "champion_id": champion_id,
             "champion_name": cname,
+            "champion_name_cn": champion_display_name(champion_id),
+            "champion_alias": champion_alias(champion_id),
             "augment_id": str(item_id),
             "augment_name": augment_name,
             "level": level,
@@ -287,6 +320,7 @@ PAGE_HTML = r"""<!DOCTYPE html>
   }
   .champ-card:hover { border-color: #e94560; transform: translateY(-2px); }
   .champ-card .name { font-size: 0.95rem; font-weight: 600; color: #e0e0e0; }
+  .champ-card .alias { font-size: 0.7rem; color: #7a7a8a; margin-top: 2px; }
   .champ-card .count { font-size: 0.7rem; color: #7ab8f5; margin-top: 4px; }
 
   /* ---------- Detail view ---------- */
@@ -400,11 +434,16 @@ async function loadChampionList() {
 
 function renderChampionGrid() {
   const q = document.getElementById('champSearch').value.toLowerCase();
-  const filtered = allChampions.filter(c => c.champion_name.toLowerCase().includes(q));
+  const filtered = allChampions.filter(c =>
+    c.champion_name_cn.toLowerCase().includes(q) ||
+    c.champion_alias.toLowerCase().includes(q) ||
+    c.champion_name.toLowerCase().includes(q)
+  );
   document.getElementById('champCount').textContent = `共 ${filtered.length} 个英雄`;
   document.getElementById('champGrid').innerHTML = filtered.map(c =>
-    `<div class="champ-card" onclick="showChampionDetail('${c.champion_id}','${escHtml(c.champion_name)}')">
-      <div class="name">${escHtml(c.champion_name)}</div>
+    `<div class="champ-card" onclick="showChampionDetail('${c.champion_id}','${escHtml(c.champion_name_cn)}')">
+      <div class="name">${escHtml(c.champion_name_cn)}</div>
+      <div class="alias">${escHtml(c.champion_alias)}</div>
       <div class="count">${c.augment_count} 个符文</div>
     </div>`
   ).join('');

@@ -13,6 +13,7 @@ DEPLOY_DATA = Path(__file__).resolve().parent / "data"
 SRC_CHAMPIONS = ROOT / "data" / "ddragon" / "champions"
 SRC_AUGMENTS = ROOT / "data" / "opgg" / "aram_augments"
 SRC_TRANS = ROOT / "data" / "augment_trans.json"
+SRC_CHAMPION_I18N = ROOT / "data" / "champions-names-i18n.json"
 
 
 def main() -> None:
@@ -40,10 +41,13 @@ def main() -> None:
         aug_count += 1
     print(f"已复制符文数据: {aug_count} 个文件")
 
-    # Translation file
+    # Translation files
     if SRC_TRANS.exists():
         shutil.copy2(SRC_TRANS, DEPLOY_DATA / "augment_trans.json")
-        print("已复制翻译文件")
+        print("已复制符文翻译文件")
+    if SRC_CHAMPION_I18N.exists():
+        shutil.copy2(SRC_CHAMPION_I18N, DEPLOY_DATA / "champions-names-i18n.json")
+        print("已复制英雄 i18n 文件")
 
     print("\n构建完成！部署步骤：")
     print("  1. cd deploy")
