@@ -58,6 +58,8 @@ class Suggest:
                 new_attr="weighted_sum",
                 tau_factor=Suggest.shrinkage_tau_factor,
                 sigmoid_steepness=Suggest.sigmoid_steepness,
+                perf_display_attr="performance_norm",
+                pop_display_attr="popular_norm",
             )
             #  对每个组进行排序，统计名次
             sorted_group_data = sorted(grouped_augments, key=lambda x: x["weighted_sum"], reverse=True)
@@ -141,8 +143,8 @@ class Suggest:
             name = augment.get("name", "未知")
             rank = augment.get("rank", augments_num)
             ws = augment.get("weighted_sum", 0)
-            perf = augment.get("performance", "N/A")
-            pop = augment.get("popular", "N/A")
+            perf_norm = augment.get("performance_norm", "N/A")
+            pop_norm = augment.get("popular_norm", "N/A")
             message = None
             if rank <= immediate_select_rank_threshold or ws >= Suggest.immediate_select_score_threshold:
                 message = f"快选符文：{name}，别的不用看了"
@@ -153,7 +155,7 @@ class Suggest:
                     message = f"考虑符文：{name}，可以随掉"
             else:
                 message = f"垃圾符文: {name}，别选，太垃圾了"
-            message += f"，{rank}/{augments_num}，表现: {perf}，流行度: {pop}"
+            message += f"，{rank}/{augments_num}，表现: {perf_norm}，流行度: {pop_norm}"
             result.append(message)
 
         return result

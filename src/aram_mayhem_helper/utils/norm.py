@@ -124,6 +124,8 @@ def add_bayesian_sigmoid_score_attr(
     new_attr: str = "weighted_sum",
     tau_factor: float = 0.5,
     sigmoid_steepness: float = 1.0,
+    perf_display_attr: str = "",
+    pop_display_attr: str = "",
 ) -> None:
     """Bayesian shrinkage + sigmoid squash into [0,1] in one pass.
 
@@ -148,6 +150,10 @@ def add_bayesian_sigmoid_score_attr(
         raw performance of low-popularity augments.
     sigmoid_steepness : float
         Controls spread of the sigmoid.  >1 widens gaps; <1 compresses.
+    perf_display_attr : str
+        If set, store sigmoid(perf, group_mean, group_std) under this key.
+    pop_display_attr : str
+        If set, store percentile rank of popularity under this key.
 
     Raises
     ------
@@ -185,7 +191,15 @@ def add_bayesian_sigmoid_score_attr(
     else:
         tau = 0.1 * tau_factor
 
-    for item in data_list:
+    # Pre-compute popularity percentiles (1.0 = most popular)
+    pop_percentiles: dict[int, float] = {}
+    if pop_display_attr:
+        n = len(pop_values)
+        sorted_indices = sorted(range(n), key=lambda i: pop_values[i], reverse=True)
+        for rank, idx in enumerate(sorted_indices):
+            pop_percentiles[idx] = 1.0 - rank / max(n - 1, 1)
+
+    for idx, item in enumerate(data_list):
         perf = float(item[perf_attr])
         pop = float(item[pop_attr])
 
@@ -200,6 +214,13 @@ def add_bayesian_sigmoid_score_attr(
         final_score = 1.0 / (1.0 + np.exp(-z))
 
         item[new_attr] = round(float(final_score), 4)
+
+        # Per-dimension display values
+        if perf_display_attr:
+            perf_z = (perf - level_mean) / divisor if divisor > 0 else 0.0
+            item[perf_display_attr] = round(float(1.0 / (1.0 + np.exp(-perf_z))), 4)
+        if pop_display_attr:
+            item[pop_display_attr] = round(pop_percentiles[idx], 4)
 
 
 def add_weighted_sum_attr(

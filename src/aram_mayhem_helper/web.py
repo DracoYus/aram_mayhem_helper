@@ -134,6 +134,8 @@ def _build_champion_augments(champion_id: str) -> list[dict]:
                 new_attr="weighted_sum",
                 tau_factor=config.get("suggest", "shrinkage_tau_factor"),
                 sigmoid_steepness=config.get("suggest", "sigmoid_steepness"),
+                perf_display_attr="performance_norm",
+                pop_display_attr="popular_norm",
             )
         except (KeyError, TypeError, ValueError) as e:
             logger.warning(f"英雄 {champion_name} 等级 {level} 的符文数据归一化失败: {e}")
