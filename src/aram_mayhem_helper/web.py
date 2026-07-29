@@ -7,25 +7,10 @@ from flask import Flask, jsonify, render_template_string
 
 from aram_mayhem_helper.utils.config import config
 from aram_mayhem_helper.utils.data import augment_tool, champion_augment_data_dict, data
+from aram_mayhem_helper.utils.i18n import champion_alias, champion_display_name
 from aram_mayhem_helper.utils.norm import add_bayesian_sigmoid_score_attr
 
 logger = logging.getLogger(__name__)
-
-# ── Champion i18n names ────────────────────────────────────────────────────
-
-
-def _load_champion_i18n() -> dict[str, dict]:
-    path = config.data_path / "champions-names-i18n.json"
-    if path.exists():
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.warning(f"读取英雄 i18n 文件失败: {e}")
-    return {}
-
-
-_champion_i18n: dict[str, dict] = _load_champion_i18n()
 
 # ── Augment descriptions ───────────────────────────────────────────────────
 
@@ -53,19 +38,6 @@ def _augment_description(augment_id: str) -> str:
     # Strip pseudo-HTML tags like <scaleAF>, <attention>, <keyword>, etc.
     desc = re.sub(r"<[^>]+>", "", desc)
     return desc
-
-
-def _champion_display_name(champion_id: str) -> str:
-    """Return Chinese display title for a champion."""
-    info = _champion_i18n.get(champion_id, {})
-    titles = info.get("titles", {})
-    return titles.get("zh-CN", "") or info.get("alias", "")
-
-
-def _champion_alias(champion_id: str) -> str:
-    """Return English alias for search/identification."""
-    info = _champion_i18n.get(champion_id, {})
-    return info.get("alias", "")
 
 
 def _build_champion_augments(champion_id: str) -> list[dict]:
@@ -113,8 +85,8 @@ def _build_champion_augments(champion_id: str) -> list[dict]:
         record = {
             "champion_id": champion_id,
             "champion_name": champion_name,
-            "champion_name_cn": _champion_display_name(champion_id),
-            "champion_alias": _champion_alias(champion_id),
+            "champion_name_cn": champion_display_name(champion_id),
+            "champion_alias": champion_alias(champion_id),
             "augment_id": str(item_id),
             "augment_name": augment_name,
             "description": _augment_description(str(item_id)),
@@ -166,8 +138,8 @@ def _build_champion_list() -> list[dict]:
             {
                 "champion_id": cid,
                 "champion_name": cname,
-                "champion_name_cn": _champion_display_name(cid),
-                "champion_alias": _champion_alias(cid),
+                "champion_name_cn": champion_display_name(cid),
+                "champion_alias": champion_alias(cid),
                 "augment_count": count,
             }
         )

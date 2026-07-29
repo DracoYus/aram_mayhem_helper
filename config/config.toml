@@ -12,6 +12,18 @@ save_directory = "opgg/aram_augments/"
 base_url = "https://ddragon.leagueoflegends.com/cdn/{0}/data/en_US/champion.json"
 save_directory = "ddragon/champions/"
 
+[team_analysis]
+# 全局热键（pynput 格式，默认 F9）
+hotkey = "<f9>"
+# 优先选择数量
+priority_count = 5
+# 陷阱数量
+trap_count = 3
+# 陷阱判定：流行度分位数高于此值
+trap_pop_threshold = 0.5
+# 陷阱判定：表现分位数低于此值
+trap_perf_threshold = 0.5
+
 [suggest]
 # 贝叶斯收缩参数：τ = median(pop > 0) × tau_factor
 # 越小越信任低出场率符文的原始表现

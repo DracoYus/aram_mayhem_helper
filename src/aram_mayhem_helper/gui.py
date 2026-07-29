@@ -8,12 +8,18 @@ import tkinter as tk
 from collections.abc import Callable
 from tkinter import scrolledtext
 
+import pyperclip
+from pynput.keyboard import GlobalHotKeys
+
 from aram_mayhem_helper.algorithm.suggest import Suggest
+from aram_mayhem_helper.algorithm.team_analysis import TeamAnalysis
 from aram_mayhem_helper.crawlers.ddragon.champion_crawler import ChampionCrawler
 from aram_mayhem_helper.crawlers.opgg.aram_augment_crawler import AramAugmentCrawler
-from aram_mayhem_helper.league_client_api.live_data import get_current_champion_name
+from aram_mayhem_helper.league_client_api.live_data import get_current_champion_name, get_teammate_champions
 from aram_mayhem_helper.ocr.ocr_tool import ocr_tool
+from aram_mayhem_helper.utils.config import config
 from aram_mayhem_helper.utils.data import champion_augment_data_dict, data, reload_data
+from aram_mayhem_helper.utils.i18n import champion_zh_name
 from aram_mayhem_helper.utils.log_config import setup_logging
 
 current_champion_id = None
@@ -122,6 +128,67 @@ def recognize_augment(log_area: scrolledtext.ScrolledText) -> None:
         print_log(f"「识别符文」操作出错：{str(e)}", log_area)
         if augments is not None:
             print_log(str(augments), log_area)
+
+
+def analyze_teammates(log_area: scrolledtext.ScrolledText) -> None:
+    """分析队友符文：获取所有队友英雄 → 逐人逐等级 → 识别优先/陷阱 → 复制到剪贴板。"""
+    print_log("开始执行「队友符文分析」...", log_area)
+
+    # 1. 获取队友英雄
+    try:
+        teammates = get_teammate_champions()
+    except Exception as e:
+        print_log(f"获取队友数据时出错：{e}", log_area)
+        return
+
+    if teammates is None:
+        print_log("无法连接到游戏客户端，请确保已进入对局", log_area)
+        return
+    if not teammates:
+        print_log("未检测到队友（可能在训练模式或单人模式）", log_area)
+        return
+
+    # 2. 对每个队友组装 {中文名: Suggest}
+    champions: dict[str, Suggest] = {}
+    for teammate in teammates:
+        name = teammate.get("championName")
+        if not name:
+            continue
+
+        champion_id = data.get_champion_id_by_name(name)
+        if not champion_id:
+            print_log(f"无法找到英雄 '{name}' 对应的数据", log_area)
+            continue
+
+        zh_name = champion_zh_name(champion_id) or name
+
+        if champion_id not in champion_augment_data_dict:
+            print_log(f"英雄 {zh_name} (ID:{champion_id}) 的符文数据不存在", log_area)
+            continue
+
+        try:
+            suggest = Suggest(champion_augment_data_dict[champion_id])
+        except Exception as e:
+            print_log(f"计算英雄 {zh_name} 符文评分时出错：{e}", log_area)
+            continue
+
+        champions[zh_name] = suggest
+
+    if not champions:
+        print_log("没有可分析的队友数据", log_area)
+        return
+
+    # 3. 分析
+    analysis = TeamAnalysis(champions)
+    output = analysis.format_output()
+
+    # 4. 输出到日志和剪贴板
+    print_log(output, log_area)
+    try:
+        pyperclip.copy(output)
+        print_log("✅ 已复制到剪贴板，可直接在游戏中 Ctrl+V 发送", log_area)
+    except Exception as e:
+        print_log(f"复制到剪贴板失败：{e}，请手动复制上方日志内容", log_area)
 
 
 # ====================== 第三步：异步爬取任务（后台线程 + 日志桥接） ======================
@@ -327,6 +394,14 @@ def create_gui() -> None:
     )
     btn2.pack(fill=tk.X, padx=pad_sm, pady=pad_xs)
 
+    btn_team = tk.Button(
+        action_group,
+        text="队友符文分析",
+        command=lambda: analyze_teammates(log_area),
+        font=btn_font,
+    )
+    btn_team.pack(fill=tk.X, padx=pad_sm, pady=pad_xs)
+
     # Right group: data crawling
     data_group = tk.LabelFrame(control_frame, text="数据抓取", font=label_font)
     data_group.grid(row=0, column=1, padx=(pad_sm, 0), pady=pad_sm, sticky="nsew")
@@ -390,8 +465,19 @@ def create_gui() -> None:
     # 初始化日志
     print_log("GUI已启动，等待执行操作...", log_area)
 
-    # 窗口关闭时清理日志 handler，避免资源泄漏
+    # 注册全局热键（在 pynput 线程中触发时通过 root.after 调度到主线程）
+    hotkey_str = config.get("team_analysis", "hotkey")
+
+    def _on_hotkey() -> None:
+        root.after(0, analyze_teammates, log_area)
+
+    hotkey_listener = GlobalHotKeys({hotkey_str: _on_hotkey})
+    hotkey_listener.start()
+    print_log(f"全局热键已注册: {hotkey_str}", log_area)
+
+    # 窗口关闭时清理日志 handler 和热键 listener，避免资源泄漏
     def _on_closing() -> None:
+        hotkey_listener.stop()
         app_logger = logging.getLogger("aram_mayhem_helper")
         for h in list(app_logger.handlers):
             if isinstance(h, TkinterLogHandler):
