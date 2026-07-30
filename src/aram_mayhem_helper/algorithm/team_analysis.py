@@ -88,11 +88,11 @@ class TeamAnalysis:
                         "name": item["name"],
                         "popular_norm": pop_norm,
                         "performance_norm": perf_norm,
-                        "gap": pop_norm - perf_norm,
+                        "misconception": round(pop_norm * (1 - perf_norm), 4),
                     }
                 )
 
-        trap_candidates.sort(key=lambda x: x["gap"], reverse=True)
+        trap_candidates.sort(key=lambda x: x["misconception"], reverse=True)
         traps = trap_candidates[: self.trap_count]
 
         return {"priorities": priorities, "traps": traps}
