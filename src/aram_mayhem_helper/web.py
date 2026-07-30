@@ -112,6 +112,13 @@ def _build_champion_augments(champion_id: str) -> list[dict]:
         except (KeyError, TypeError, ValueError) as e:
             logger.warning(f"英雄 {champion_name} 等级 {level} 的符文数据归一化失败: {e}")
 
+    # 计算误解指数（陷阱得分）：popular_norm × (1 − performance_norm)
+    for record in rows:
+        pn = record.get("popular_norm", 0)
+        fn = record.get("performance_norm", 0)
+        record["misconception"] = round(pn * (1 - fn), 4)
+        record["is_trap"] = pn > 0.5 and fn < 0.5
+
     return rows
 
 
@@ -256,6 +263,35 @@ PAGE_HTML = r"""<!DOCTYPE html>
   .ws-high { color: #4caf50; font-weight: 600; }
   .ws-mid { color: #ff9800; }
   .ws-low { color: #f44336; }
+
+  /* Trap card */
+  .trap-card {
+    display: none; margin: 12px 32px; padding: 12px 16px;
+    background: linear-gradient(135deg, #2a1a1e 0%, #1a1a2e 100%);
+    border: 1px solid #e94560; border-radius: 8px;
+  }
+  .trap-card.show { display: block; }
+  .trap-card .trap-title {
+    font-size: 0.95rem; font-weight: 700; color: #e94560; margin-bottom: 8px;
+  }
+  .trap-card .trap-list { display: flex; gap: 10px; flex-wrap: wrap; }
+  .trap-card .trap-item {
+    flex: 1; min-width: 200px; padding: 8px 12px;
+    background: rgba(233, 69, 96, 0.08); border-radius: 6px;
+    border-left: 3px solid #e94560;
+  }
+  .trap-item .trap-aug-name { font-weight: 600; color: #ff6b7a; }
+  .trap-item .trap-level { font-size: 0.75rem; color: #a0a0b0; margin-left: 6px; }
+  .trap-item .trap-score {
+    font-size: 0.85rem; font-weight: 700;
+  }
+  .trap-item .trap-detail { font-size: 0.7rem; color: #7a7a8a; margin-top: 2px; }
+
+  /* Misconception score colors */
+  .mis-high { color: #f44336; font-weight: 700; }
+  .mis-mid { color: #ff9800; font-weight: 600; }
+  .mis-low { color: #4a4a5a; }
+  tr.trap-row td { border-left: 3px solid #e94560; }
 </style>
 </head>
 <body>
@@ -284,8 +320,18 @@ PAGE_HTML = r"""<!DOCTYPE html>
       <label>最低表现 <input type="number" id="minPerf" value="0" min="0" max="100" step="0.1"></label>
       <label>最低流行 <input type="number" id="minPop" value="0" min="0" max="100" step="0.1"></label>
     </span>
+    <span class="filter-group">
+      <label><input type="checkbox" id="trapOnly"> 仅陷阱</label>
+      <label>陷阱指数 ≥ <input type="number" id="minMis" value="0" min="0" max="1" step="0.05"></label>
+    </span>
     <span class="count-label" id="detailCount" style="margin-left:auto"></span>
   </div>
+  <!-- 陷阱警示卡片 -->
+  <div class="trap-card" id="trapCard">
+    <div class="trap-title">⚠ 陷阱符文 — 很多人选但降低胜率的误解选择</div>
+    <div class="trap-list" id="trapList"></div>
+  </div>
+
   <div id="tooltip"></div>
 <div class="table-wrap">
     <table id="dataTable">
@@ -296,6 +342,7 @@ PAGE_HTML = r"""<!DOCTYPE html>
           <th data-col="performance" class="num">表现 <span class="arrow">▲▼</span></th>
           <th data-col="popular" class="num">流行度 <span class="arrow">▲▼</span></th>
           <th data-col="weighted_sum" class="num">综合评分 <span class="arrow">▲▼</span></th>
+          <th data-col="misconception" class="num">陷阱指数 <span class="arrow">▲▼</span></th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -364,20 +411,48 @@ function showChampionList() {
   renderChampionGrid();
 }
 
+function renderTrapCard() {
+  const traps = currentAugments.filter(d => d.is_trap);
+  if (traps.length === 0) {
+    document.getElementById('trapCard').classList.remove('show');
+    return;
+  }
+  const byMis = [...traps].sort((a, b) => b.misconception - a.misconception).slice(0, 3);
+  const labels = {'2': '棱彩', '1': '黄金', '0': '白银'};
+  document.getElementById('trapList').innerHTML = byMis.map(d => {
+    const cls = d.misconception >= 0.5 ? 'mis-high' : d.misconception >= 0.25 ? 'mis-mid' : 'mis-low';
+    const popPct = (d.popular_norm * 100).toFixed(0);
+    const perfPct = (d.performance_norm * 100).toFixed(0);
+    return `<div class="trap-item">
+      <span class="trap-aug-name">${escHtml(d.augment_name)}</span>
+      <span class="trap-level">${labels[d.level] || 'Lv'+d.level}</span>
+      <div><span class="trap-score ${cls}">${d.misconception.toFixed(3)}</span></div>
+      <div class="trap-detail">流行度 ${popPct}% · 表现 ${perfPct}%</div>
+    </div>`;
+  }).join('');
+  document.getElementById('trapCard').classList.add('show');
+}
+
 function renderDetail() {
   const showL0 = document.getElementById('level0').checked;
   const showL1 = document.getElementById('level1').checked;
   const showL2 = document.getElementById('level2').checked;
   const minPerf = parseFloat(document.getElementById('minPerf').value) || 0;
   const minPop = parseFloat(document.getElementById('minPop').value) || 0;
+  const trapOnly = document.getElementById('trapOnly').checked;
+  const minMis = parseFloat(document.getElementById('minMis').value) || 0;
   const allowedLevels = new Set();
   if (showL0) allowedLevels.add('0');
   if (showL1) allowedLevels.add('1');
   if (showL2) allowedLevels.add('2');
 
-  const filtered = currentAugments.filter(d =>
+  renderTrapCard();
+
+  let filtered = currentAugments.filter(d =>
     allowedLevels.has(d.level) && d.performance >= minPerf && d.popular >= minPop
   );
+  if (trapOnly) filtered = filtered.filter(d => d.is_trap);
+  if (minMis > 0) filtered = filtered.filter(d => d.misconception >= minMis);
   const sorted = [...filtered].sort((a, b) => {
     let va = a[sortCol], vb = b[sortCol];
     if (typeof va === 'string') return va.localeCompare(vb, 'zh-CN') * sortDir;
@@ -389,12 +464,16 @@ function renderDetail() {
     const ws = d.weighted_sum != null ? d.weighted_sum.toFixed(2) : '-';
     const perf = d.performance != null ? d.performance.toFixed(1) : '-';
     const pop = d.popular != null ? d.popular.toFixed(1) : '-';
-    return `<tr>
+    const mis = d.misconception != null ? d.misconception.toFixed(3) : '-';
+    const misCls = d.misconception >= 0.5 ? 'mis-high' : d.misconception >= 0.25 ? 'mis-mid' : 'mis-low';
+    const rowCls = d.is_trap ? 'trap-row' : '';
+    return `<tr class="${rowCls}">
       <td><span data-tooltip="${escHtml(d.description || '')}" class="aug-name">${escHtml(d.augment_name)}</span></td>
       <td><span class="level-badge level-${d.level}">${d.level}</span></td>
       <td class="num">${perf}</td>
       <td class="num">${pop}</td>
       <td class="num"><span class="${wsClass}">${ws}</span></td>
+      <td class="num"><span class="${misCls}">${mis}</span></td>
     </tr>`;
   }).join('');
 
