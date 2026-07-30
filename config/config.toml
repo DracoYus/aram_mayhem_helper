@@ -13,8 +13,10 @@ base_url = "https://ddragon.leagueoflegends.com/cdn/{0}/data/en_US/champion.json
 save_directory = "ddragon/champions/"
 
 [team_analysis]
-# 全局热键（pynput 格式，默认 F9）
-hotkey = "<f9>"
+# 全局热键虚拟键码 (VK_Z = 0x5A)
+hotkey_vk = 0x5A
+# 修饰键 (MOD_NONE=0, MOD_ALT=1, MOD_CONTROL=2, MOD_SHIFT=4)
+hotkey_modifiers = 1
 # 优先选择数量
 priority_count = 5
 # 陷阱数量
@@ -23,6 +25,8 @@ trap_count = 3
 trap_pop_threshold = 0.5
 # 陷阱判定：表现分位数低于此值
 trap_perf_threshold = 0.5
+# 键盘模拟输入时每个字符间延迟（秒）
+type_char_delay = 0.002
 
 [suggest]
 # 贝叶斯收缩参数：τ = median(pop > 0) × tau_factor

@@ -6,10 +6,12 @@ import threading
 import time
 import tkinter as tk
 from collections.abc import Callable
+from ctypes import wintypes
 from tkinter import scrolledtext
 
 import pyperclip
-from pynput.keyboard import GlobalHotKeys
+from pynput.keyboard import Controller as KeyboardController
+from pynput.keyboard import Key
 
 from aram_mayhem_helper.algorithm.suggest import Suggest
 from aram_mayhem_helper.algorithm.team_analysis import TeamAnalysis
@@ -130,6 +132,127 @@ def recognize_augment(log_area: scrolledtext.ScrolledText) -> None:
             print_log(str(augments), log_area)
 
 
+# ── Win32 RegisterHotKey (系统级全局热键，绕过 UIPI) ─────────────────────
+
+WM_HOTKEY = 0x0312
+HOTKEY_ID = 1
+
+# WNDPROC 签名
+_WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_long, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+
+
+class _WNDCLASSW(ctypes.Structure):
+    _fields_ = [
+        ("style", wintypes.UINT),
+        ("lpfnWndProc", _WNDPROC),
+        ("cbClsExtra", ctypes.c_int),
+        ("cbWndExtra", ctypes.c_int),
+        ("hInstance", wintypes.HINSTANCE),
+        ("hIcon", wintypes.HANDLE),
+        ("hCursor", wintypes.HANDLE),
+        ("hbrBackground", wintypes.HANDLE),
+        ("lpszMenuName", wintypes.LPCWSTR),
+        ("lpszClassName", wintypes.LPCWSTR),
+    ]
+
+
+# 窗口过程必须在模块级别保持引用，防止被 GC
+_hotkey_root_ref: tk.Tk | None = None
+_hotkey_callback_ref: Callable[[], None] | None = None
+
+
+@_WNDPROC
+def _hotkey_wnd_proc(hwnd, msg, wparam, lparam):
+    """窗口过程：处理 WM_HOTKEY，其他消息交给默认处理。"""
+    if msg == WM_HOTKEY and _hotkey_root_ref is not None and _hotkey_callback_ref is not None:
+        try:
+            _hotkey_root_ref.after(0, _hotkey_callback_ref)
+        except Exception:
+            pass
+        return 0
+    return ctypes.windll.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+
+def _start_hotkey_listener(root: tk.Tk, callback: Callable[[], None]) -> None:
+    """启动 Win32 RegisterHotKey 后台消息循环。
+
+    使用系统级热键注册，绕过 Windows UIPI 限制，
+    在游戏前台时也能捕获热键。
+
+    失败时自动回退到 pynput 全局热键。
+    """
+    global _hotkey_root_ref, _hotkey_callback_ref
+    _hotkey_root_ref = root
+    _hotkey_callback_ref = callback
+
+    vk_code = config.get("team_analysis", "hotkey_vk")
+    modifiers = config.get("team_analysis", "hotkey_modifiers")
+
+    hinstance = ctypes.windll.kernel32.GetModuleHandleW(None)
+
+    wndclass = _WNDCLASSW()
+    wndclass.lpfnWndProc = _hotkey_wnd_proc
+    wndclass.hInstance = hinstance
+    wndclass.lpszClassName = "TeamAnalysisHotkey"
+    if not ctypes.windll.user32.RegisterClassW(ctypes.byref(wndclass)):
+        _start_pynput_fallback(root, callback)
+        return
+
+    hwnd = ctypes.windll.user32.CreateWindowExW(0, "TeamAnalysisHotkey", "", 0, 0, 0, 0, 0, None, None, hinstance, None)
+    if not hwnd:
+        _start_pynput_fallback(root, callback)
+        return
+
+    if not ctypes.windll.user32.RegisterHotKey(hwnd, HOTKEY_ID, modifiers, vk_code):
+        ctypes.windll.user32.DestroyWindow(hwnd)
+        _start_pynput_fallback(root, callback)
+        return
+
+    def _run() -> None:
+        msg = wintypes.MSG()
+        while ctypes.windll.user32.GetMessageW(ctypes.byref(msg), hwnd, 0, 0) != 0:
+            ctypes.windll.user32.TranslateMessage(ctypes.byref(msg))
+            ctypes.windll.user32.DispatchMessageW(ctypes.byref(msg))
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+
+def _start_pynput_fallback(root: tk.Tk, callback: Callable[[], None]) -> None:
+    """RegisterHotKey 失败时的 pynput 回退方案。"""
+    from pynput.keyboard import GlobalHotKeys as _GlobalHotKeys
+
+    try:
+        listener = _GlobalHotKeys({"<ctrl>+<alt>+z": callback})
+        listener.start()
+    except Exception:
+        pass
+
+
+# ── 键盘模拟输入（SendInput + KEYEVENTF_UNICODE） ─────────────────────────
+
+
+def send_to_game_chat(text: str, log_area: scrolledtext.ScrolledText | None = None) -> None:
+    """通过键盘模拟发送文本到游戏聊天框。
+
+    使用 pynput.Controller.type() → SendInput + KEYEVENTF_UNICODE，
+    直接发送 Unicode 码点，正确处理中文，绕过剪贴板限制。
+    """
+    if log_area:
+        print_log("正在发送到游戏聊天...", log_area)
+    kb = KeyboardController()
+
+    kb.press(Key.enter)
+    kb.release(Key.enter)
+    time.sleep(0.15)
+
+    kb.type(text)
+
+    time.sleep(0.05)
+    kb.press(Key.enter)
+    kb.release(Key.enter)
+
+
 def analyze_teammates(log_area: scrolledtext.ScrolledText) -> None:
     """分析队友符文：获取所有队友英雄 → 逐人逐等级 → 识别优先/陷阱 → 复制到剪贴板。"""
     print_log("开始执行「队友符文分析」...", log_area)
@@ -182,13 +305,14 @@ def analyze_teammates(log_area: scrolledtext.ScrolledText) -> None:
     analysis = TeamAnalysis(champions)
     output = analysis.format_output()
 
-    # 4. 输出到日志和剪贴板
+    # 4. 输出：剪贴板备份 + 日志 + 键盘模拟输入到游戏
     print_log(output, log_area)
     try:
         pyperclip.copy(output)
-        print_log("✅ 已复制到剪贴板，可直接在游戏中 Ctrl+V 发送", log_area)
-    except Exception as e:
-        print_log(f"复制到剪贴板失败：{e}，请手动复制上方日志内容", log_area)
+    except Exception:
+        pass
+    send_to_game_chat(output, log_area)
+    print_log("✅ 已发送到游戏聊天（剪贴板也已备份）", log_area)
 
 
 # ====================== 第三步：异步爬取任务（后台线程 + 日志桥接） ======================
@@ -465,19 +589,17 @@ def create_gui() -> None:
     # 初始化日志
     print_log("GUI已启动，等待执行操作...", log_area)
 
-    # 注册全局热键（在 pynput 线程中触发时通过 root.after 调度到主线程）
-    hotkey_str = config.get("team_analysis", "hotkey")
-
+    # 注册全局热键（Win32 RegisterHotKey，绕过 UIPI 在游戏中也能触发）
     def _on_hotkey() -> None:
         root.after(0, analyze_teammates, log_area)
 
-    hotkey_listener = GlobalHotKeys({hotkey_str: _on_hotkey})
-    hotkey_listener.start()
-    print_log(f"全局热键已注册: {hotkey_str}", log_area)
+    _start_hotkey_listener(root, _on_hotkey)
+    vk_code = config.get("team_analysis", "hotkey_vk")
+    mods = config.get("team_analysis", "hotkey_modifiers")
+    print_log(f"全局热键已注册 (VK=0x{vk_code:X}, MOD={mods})", log_area)
 
-    # 窗口关闭时清理日志 handler 和热键 listener，避免资源泄漏
+    # 窗口关闭时清理日志 handler，避免资源泄漏
     def _on_closing() -> None:
-        hotkey_listener.stop()
         app_logger = logging.getLogger("aram_mayhem_helper")
         for h in list(app_logger.handlers):
             if isinstance(h, TkinterLogHandler):
