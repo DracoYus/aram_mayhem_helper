@@ -6,6 +6,7 @@ import unicodedata
 DEFAULT_RULES: list[tuple[str, str]] = [
     ("进", "迸"),
     ("鸣", "呜"),
+    ("堂", "掌"),
 ]
 
 
@@ -30,13 +31,18 @@ def normalize_text(text: str, rules: list[tuple[str, str]] | None = None) -> str
     return text
 
 
+# CJK 字符中酷似横线的字符，OCR 常将其误读为连字符（Pd）
+_OCR_DASH_MISREADS: set[str] = {"一"}  # 一 (U+4E00) — OCR 经常把细 ASCII "-" 错读成这个字
+
+
 def normalize_for_lookup(text: str) -> str:
     """归一化文本用于模糊匹配查找，消除 OCR 产出的不可控格式差异.
 
     规则（按顺序）：
     1. 所有 Unicode 连字符（Pd 类别）统一为 ASCII ``-``
-    2. 所有 Unicode 空白字符（Z 类别）直接丢弃
-    3. 应用 normalize_text() 修正语义错字
+    2. 常见 OCR 横线误读字符（如 ``一``）也统一为 ASCII ``-``
+    3. 所有 Unicode 空白字符（Z 类别）直接丢弃
+    4. 应用 normalize_text() 修正语义错字
 
     Pd (Dash Punctuation) 示例：``-`` ``–`` ``—`` ``―`` ``‑`` ``﹘`` ``－`` ...
     Z (Separator) 示例：       `` `` ``　`` ``\t`` `` `` ...
@@ -53,7 +59,7 @@ def normalize_for_lookup(text: str) -> str:
     result = []
     for ch in text:
         cat = unicodedata.category(ch)
-        if cat == "Pd":
+        if cat == "Pd" or ch in _OCR_DASH_MISREADS:
             result.append("-")
         elif not (cat.startswith("Z") or cat == "Cc"):
             result.append(ch)
