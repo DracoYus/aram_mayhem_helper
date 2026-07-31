@@ -1,16 +1,18 @@
 """OCR 文本规范化工具，修正常见字符误识别."""
 
+import unicodedata
+
+# 仍保留精确字面对照规则，用于修正 OCR 的语义级误识别
 DEFAULT_RULES: list[tuple[str, str]] = [
-    ("—", "-"),  # em-dash (U+2014) — 常见 OCR 误识别为连字符
-    ("–", "-"),  # en-dash (U+2013)
-    ("－", "-"),  # 全角连字符 (U+FF0D)
     ("进", "迸"),
     ("鸣", "呜"),
 ]
 
 
 def normalize_text(text: str, rules: list[tuple[str, str]] | None = None) -> str:
-    """将文本中的 OCR 误识别字符替换为正确字符.
+    """将文本中的 OCR 语义误识别字符替换为正确字符.
+
+    注意：此函数不处理连字符和空白，这些由 normalize_for_lookup() 统一处理。
 
     Args:
         text: 待规范化的原始文本
@@ -26,3 +28,35 @@ def normalize_text(text: str, rules: list[tuple[str, str]] | None = None) -> str
     for from_char, to_char in rules:
         text = text.replace(from_char, to_char)
     return text
+
+
+def normalize_for_lookup(text: str) -> str:
+    """归一化文本用于模糊匹配查找，消除 OCR 产出的不可控格式差异.
+
+    规则（按顺序）：
+    1. 所有 Unicode 连字符（Pd 类别）统一为 ASCII ``-``
+    2. 所有 Unicode 空白字符（Z 类别）直接丢弃
+    3. 应用 normalize_text() 修正语义错字
+
+    Pd (Dash Punctuation) 示例：``-`` ``–`` ``—`` ``―`` ``‑`` ``﹘`` ``－`` ...
+    Z (Separator) 示例：       `` `` ``　`` ``\t`` `` `` ...
+
+    Args:
+        text: 待归一化的原始文本
+
+    Returns:
+        归一化后的文本
+    """
+    if not text:
+        return text
+
+    result = []
+    for ch in text:
+        cat = unicodedata.category(ch)
+        if cat == "Pd":
+            result.append("-")
+        elif not (cat.startswith("Z") or cat == "Cc"):
+            result.append(ch)
+        # Z 类（空白分隔符）和 Cc 类（控制字符）直接丢弃
+
+    return normalize_text("".join(result))

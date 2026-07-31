@@ -6,7 +6,7 @@ from typing import Dict
 import requests
 
 from aram_mayhem_helper.utils.config import config
-from aram_mayhem_helper.utils.text_normalization import normalize_text
+from aram_mayhem_helper.utils.text_normalization import normalize_for_lookup, normalize_text
 
 
 class Data:
@@ -110,6 +110,7 @@ class AugmentTool:
         self.logger = logging.getLogger(__name__)
         self.id_name_dict = {}
         self.name_id_dict = {}
+        self._name_norm_dict: dict[str, str] = {}  # 归一化名 → 原始名映射
         trans_file = config.data_path / "augment_trans.json"
         if trans_file.exists():
             try:
@@ -133,11 +134,24 @@ class AugmentTool:
                 self.logger.warning(f"翻译文件中符文 ID {aug_id}({name}) 缺少 'level' 字段，已跳过")
                 continue
             self.name_id_dict[name] = {"id": aug_id, "level": level}
+            # 构建归一化名 → 原始名的索引
+            norm = normalize_for_lookup(name)
+            if norm not in self._name_norm_dict:
+                self._name_norm_dict[norm] = name
 
     def get_augment_id(self, augment_name: str) -> str | None:
-        """根据符文名称获取符文ID"""
-        normalized_name = normalize_text(augment_name)
-        augment_info = self.name_id_dict.get(normalized_name, None)
+        """根据符文名称获取符文ID，支持空格/连字符的 OCR 变体容错匹配."""
+        # 先精确匹配（快路径）
+        augment_info = self.name_id_dict.get(augment_name)
+        if augment_info:
+            return augment_info["id"]
+
+        # 归一化匹配：消除 OCR 产出的空格、连字符差异
+        input_norm = normalize_for_lookup(augment_name)
+        original_name = self._name_norm_dict.get(input_norm)
+        if original_name is None:
+            return None
+        augment_info = self.name_id_dict.get(original_name)
         if augment_info:
             return augment_info["id"]
         return None
