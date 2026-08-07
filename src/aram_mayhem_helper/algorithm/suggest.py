@@ -1,8 +1,12 @@
 import logging
 
 from aram_mayhem_helper.utils.config import config
-from aram_mayhem_helper.utils.data import ChampionAugmentData, augment_tool
-from aram_mayhem_helper.utils.norm import add_bayesian_sigmoid_score_attr
+from aram_mayhem_helper.utils.data import (
+    ChampionAugmentData,
+    get_augment_id_for_source,
+    get_augment_info_for_source,
+)
+from aram_mayhem_helper.utils.norm import add_bayesian_sigmoid_score_attr, add_unit_scale_attr
 
 
 class Suggest:
@@ -15,6 +19,7 @@ class Suggest:
 
     def __init__(self, champion_augment_data: ChampionAugmentData):
         self.logger = logging.getLogger(__name__)
+        self.source = champion_augment_data.source
 
         raw_champion_augment_data = champion_augment_data.get_champion_augment_data()
         filtered_data = []
@@ -37,7 +42,7 @@ class Suggest:
             if item_id is None:
                 self.logger.warning(f"英雄id:{champion_augment_data.champion_id}，符文数据项缺少 'id' 字段: {item}")
                 continue
-            augment_info = augment_tool.get_augment_info(str(item_id))
+            augment_info = get_augment_info_for_source(self.source, str(item_id))
             if not augment_info:
                 continue
             level = augment_info["level"]
@@ -51,10 +56,12 @@ class Suggest:
             grouped_augments = group_data["augments"]
             group_size = len(grouped_augments)
             group_data["number"] = group_size
+            # 统一数据源尺度：performance/popular 先 min-max 缩放到 [0,1]
+            add_unit_scale_attr(grouped_augments)
             add_bayesian_sigmoid_score_attr(
                 grouped_augments,
-                perf_attr="performance",
-                pop_attr="popular",
+                perf_attr="performance_unit",
+                pop_attr="popular_unit",
                 new_attr="weighted_sum",
                 tau_factor=Suggest.shrinkage_tau_factor,
                 sigmoid_steepness=Suggest.sigmoid_steepness,
@@ -98,7 +105,7 @@ class Suggest:
         """
         augment_info = []
         for augment in augments:
-            augment_id = augment_tool.get_augment_id(augment)
+            augment_id = get_augment_id_for_source(self.source, augment)
             if not augment_id:
                 self.logger.warning(f"无法识别符文名称 '{augment}'，翻译文件中未找到匹配")
                 continue

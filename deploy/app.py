@@ -9,16 +9,25 @@ import logging
 from pathlib import Path
 
 import numpy as np
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, render_template_string, request
 
 # ── Paths (relative to this file) ──────────────────────────────────────────
 HERE = Path(__file__).resolve().parent
 DATA_DIR = HERE / "data"
 CHAMPIONS_DIR = DATA_DIR / "ddragon" / "champions"
 AUGMENTS_DIR = DATA_DIR / "opgg" / "aram_augments"
+# aramkit 数据集子目录: all 全体 / high 高分段
+ARAMKIT_DATASET = "all"
+ARAMKIT_DIR = DATA_DIR / "aramkit" / "aram_augments" / ARAMKIT_DATASET
+ARAMKIT_RESOURCES_DIR = DATA_DIR / "aramkit" / "resources"
 TRANS_FILE = DATA_DIR / "augment_trans.json"
 I18N_FILE = DATA_DIR / "champions-names-i18n.json"
 AUG_DESC_FILE = DATA_DIR / "aram-mayhem-augments.zh_cn.json"
+
+# 默认数据源: "opgg" | "aramkit"
+DEFAULT_SOURCE = "opgg"
+# aramkit rarity → level（2=棱彩, 1=黄金, 0=白银）
+RARITY_TO_LEVEL = {"prismatic": "2", "gold": "1", "silver": "0"}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -90,6 +99,52 @@ def add_bayesian_sigmoid_score_attr(
             item[perf_display_attr] = round(float(1.0 / (1.0 + np.exp(-perf_z))), 4)
         if pop_display_attr:
             item[pop_display_attr] = round(pop_percentiles[idx], 4)
+
+
+def add_unit_scale_attr(
+    data_list: list,
+    perf_attr: str = "performance",
+    pop_attr: str = "popular",
+    perf_unit_attr: str = "performance_unit",
+    pop_unit_attr: str = "popular_unit",
+) -> None:
+    """Min-max scale performance/popular into [0,1], writing new fields (raw values kept).
+
+    Unifies the scale of different data sources (OP.GG 0-100 vs aramkit 0-1)
+    before the Bayesian shrinkage step.
+    """
+    if not data_list:
+        return
+    for src_attr, new_attr in ((perf_attr, perf_unit_attr), (pop_attr, pop_unit_attr)):
+        values = [float(item[src_attr]) for item in data_list]
+        min_val, max_val = min(values), max(values)
+        if max_val == min_val:
+            for item in data_list:
+                item[new_attr] = 0.0
+        else:
+            for item in data_list:
+                item[new_attr] = round((float(item[src_attr]) - min_val) / (max_val - min_val), 4)
+
+
+def convert_augment_records(augment_list: list[dict]) -> list[dict]:
+    """Convert aramkit augment records to engine-standard records (native 0-1 values)."""
+    converted: list[dict] = []
+    for item in augment_list:
+        item_id = item.get("id")
+        win_rate = item.get("winRate")
+        pick_rate = item.get("pickRate")
+        if item_id is None or win_rate is None or pick_rate is None:
+            continue
+        record = {
+            "id": item_id,
+            "performance": float(win_rate),
+            "popular": float(pick_rate),
+        }
+        for key in ("sampleCount", "rank", "stageAgnostic", "availableStages"):
+            if key in item:
+                record[key] = item[key]
+        converted.append(record)
+    return converted
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -197,8 +252,64 @@ def get_champion_name(cid: str) -> str | None:
     return CHAMPION_NAMES.get(cid)
 
 
-def get_augment_info(aug_id: str) -> dict | None:
-    return AUGMENT_TRANS.get(aug_id)
+# ── aramkit resources fallback (lazy) ──────────────────────────────────────
+
+ARAMKIT_AUGMENT_INFO: dict[str, dict] = {}
+ARAMKIT_AUGMENT_NAME_IDS: dict[str, str] = {}
+_ARAMKIT_LOADED = False
+
+
+def _load_aramkit_resources() -> None:
+    """Lazily load the newest aramkit resources dir into in-memory maps."""
+    global ARAMKIT_AUGMENT_INFO, ARAMKIT_AUGMENT_NAME_IDS, _ARAMKIT_LOADED
+    if _ARAMKIT_LOADED:
+        return
+    _ARAMKIT_LOADED = True
+    if not ARAMKIT_RESOURCES_DIR.exists():
+        return
+    version_dirs = [d for d in ARAMKIT_RESOURCES_DIR.iterdir() if d.is_dir()]
+    if not version_dirs:
+        return
+    latest_dir = max(version_dirs, key=lambda d: d.name)
+    aug_file = latest_dir / "augments.json"
+    if not aug_file.exists():
+        return
+    try:
+        raw = _load_json(aug_file)
+    except Exception as e:
+        logger.warning(f"读取 aramkit 资源文件失败: {e}")
+        return
+    info: dict[str, dict] = {}
+    name_ids: dict[str, str] = {}
+    for aug_id, entry in raw.items():
+        name = entry.get("name")
+        if not name:
+            continue
+        level = RARITY_TO_LEVEL.get(entry.get("rarity"), "0")
+        info[aug_id] = {"name": name, "level": level}
+        name_ids[name] = aug_id
+    ARAMKIT_AUGMENT_INFO = info
+    ARAMKIT_AUGMENT_NAME_IDS = name_ids
+
+
+def get_augment_info(aug_id: str, source: str = DEFAULT_SOURCE) -> dict | None:
+    """翻译表优先；aramkit 缺失时回退其资源文件。"""
+    info = AUGMENT_TRANS.get(aug_id)
+    if info is None and source == "aramkit":
+        _load_aramkit_resources()
+        info = ARAMKIT_AUGMENT_INFO.get(aug_id)
+    return info
+
+
+def get_augment_id(augment_name: str, source: str = DEFAULT_SOURCE) -> str | None:
+    """按名称反查 ID：翻译表优先；aramkit 缺失时回退其资源文件。"""
+    for aug_id, entry in AUGMENT_TRANS.items():
+        if entry.get("name") == augment_name:
+            return aug_id
+    if source == "aramkit":
+        _load_aramkit_resources()
+        return ARAMKIT_AUGMENT_NAME_IDS.get(augment_name)
+    return None
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -206,26 +317,32 @@ def get_augment_info(aug_id: str) -> dict | None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def _list_cached_champion_ids() -> list[str]:
+def _list_cached_champion_ids(source: str = DEFAULT_SOURCE) -> list[str]:
     """Return sorted list of champion IDs that have cached augment data."""
-    if not AUGMENTS_DIR.exists():
+    data_dir = ARAMKIT_DIR if source == "aramkit" else AUGMENTS_DIR
+    if not data_dir.exists():
         return []
     return sorted(
-        [f.stem for f in AUGMENTS_DIR.iterdir() if f.suffix == ".json"],
+        [f.stem for f in data_dir.iterdir() if f.suffix == ".json"],
         key=int,
     )
 
 
-def build_champion_list() -> list[dict]:
+def build_champion_list(source: str = DEFAULT_SOURCE) -> list[dict]:
     champions: list[dict] = []
-    for cid in _list_cached_champion_ids():
+    data_dir = ARAMKIT_DIR if source == "aramkit" else AUGMENTS_DIR
+    for cid in _list_cached_champion_ids(source):
         cname = get_champion_name(cid)
         if not cname:
             continue
-        aug_file = AUGMENTS_DIR / f"{cid}.json"
+        aug_file = data_dir / f"{cid}.json"
         count = 0
         try:
-            entries = _load_json(aug_file).get("data", [])
+            raw = _load_json(aug_file)
+            if source == "aramkit":
+                entries = convert_augment_records(raw.get("augments", {}).get("all", []))
+            else:
+                entries = raw.get("data", [])
             count = sum(
                 1
                 for e in entries
@@ -245,14 +362,19 @@ def build_champion_list() -> list[dict]:
     return champions
 
 
-def build_champion_augments(champion_id: str) -> list[dict]:
+def build_champion_augments(champion_id: str, source: str = DEFAULT_SOURCE) -> list[dict]:
     cname = get_champion_name(champion_id)
     if not cname:
         return []
 
-    aug_file = AUGMENTS_DIR / f"{champion_id}.json"
+    data_dir = ARAMKIT_DIR if source == "aramkit" else AUGMENTS_DIR
+    aug_file = data_dir / f"{champion_id}.json"
     try:
-        entries = _load_json(aug_file).get("data", [])
+        raw = _load_json(aug_file)
+        if source == "aramkit":
+            entries = convert_augment_records(raw.get("augments", {}).get("all", []))
+        else:
+            entries = raw.get("data", [])
     except Exception:
         logger.warning(f"无法读取英雄 {champion_id} 的符文数据")
         return []
@@ -272,7 +394,7 @@ def build_champion_augments(champion_id: str) -> list[dict]:
         if item_id is None:
             continue
 
-        aug_info = get_augment_info(str(item_id))
+        aug_info = get_augment_info(str(item_id), source)
         if not aug_info:
             continue
 
@@ -296,10 +418,12 @@ def build_champion_augments(champion_id: str) -> list[dict]:
 
     for level, level_items in by_level.items():
         try:
+            # 统一数据源尺度：performance/popular 先 min-max 缩放到 [0,1]
+            add_unit_scale_attr(level_items)
             add_bayesian_sigmoid_score_attr(
                 level_items,
-                perf_attr="performance",
-                pop_attr="popular",
+                perf_attr="performance_unit",
+                pop_attr="popular_unit",
                 new_attr="weighted_sum",
                 tau_factor=SHRINKAGE_TAU_FACTOR,
                 sigmoid_steepness=SIGMOID_STEEPNESS,
@@ -349,6 +473,11 @@ PAGE_HTML = r"""<!DOCTYPE html>
   }
   .top-bar .back-btn:hover { background: rgba(233, 69, 96, 0.15); }
   .top-bar .back-btn.show { display: inline-block; }
+  .top-bar .source-select {
+    padding: 5px 10px; border: 1px solid #0f3460; border-radius: 4px;
+    background: #1a1a2e; color: #e0e0e0; font-size: 0.85rem; cursor: pointer;
+  }
+  .top-bar .source-select:focus { outline: none; border-color: #e94560; }
   .top-bar .subtitle { font-size: 0.85rem; color: #a0a0b0; margin-left: auto; }
   .search-bar {
     padding: 10px 32px; background: #16213e; border-bottom: 1px solid #0f3460;
@@ -468,6 +597,10 @@ PAGE_HTML = r"""<!DOCTYPE html>
 <div class="top-bar">
   <button class="back-btn" id="backBtn" onclick="showChampionList()">← 返回</button>
   <h1>ARAM 符文数据浏览</h1>
+  <select id="sourceSel" class="source-select" title="数据源">
+    <option value="opgg" {{ 'selected' if default_source == 'opgg' }}>OP.GG</option>
+    <option value="aramkit" {{ 'selected' if default_source == 'aramkit' }}>Aramkit</option>
+  </select>
   <span class="subtitle" id="headerSub"></span>
 </div>
 
@@ -525,10 +658,13 @@ let allChampions = [];
 let currentAugments = [];
 let sortCol = 'weighted_sum';
 let sortDir = -1;
+const sourceSel = document.getElementById('sourceSel');
+let currentSource = sourceSel.value;
+const SOURCE_LABELS = { 'opgg': 'OP.GG', 'aramkit': 'Aramkit' };
 
 async function loadChampionList() {
   try {
-    const resp = await fetch('/api/champions');
+    const resp = await fetch('/api/champions?source=' + encodeURIComponent(currentSource));
     allChampions = await resp.json();
     renderChampionGrid();
   } catch (err) {
@@ -557,12 +693,13 @@ async function showChampionDetail(cid, cname) {
   document.getElementById('championView').classList.add('hidden');
   document.getElementById('detailView').classList.add('show');
   document.getElementById('backBtn').classList.add('show');
-  document.getElementById('headerSub').textContent = '— ' + cname;
+  const srcLabel = SOURCE_LABELS[currentSource] || currentSource;
+  document.getElementById('headerSub').textContent = '— ' + cname + ' (' + srcLabel + ')';
   document.getElementById('detailCount').textContent = '加载中…';
   document.querySelector('#dataTable tbody').innerHTML = '';
 
   try {
-    const resp = await fetch('/api/champions/' + cid + '/augments');
+    const resp = await fetch('/api/champions/' + cid + '/augments?source=' + encodeURIComponent(currentSource));
     currentAugments = await resp.json();
     sortCol = 'weighted_sum';
     sortDir = -1;
@@ -688,6 +825,12 @@ document.querySelector('#dataTable tbody').addEventListener('mouseleave', e => {
 // --- Event listeners ---
 document.getElementById('champSearch').addEventListener('input', renderChampionGrid);
 
+sourceSel.addEventListener('change', () => {
+  currentSource = sourceSel.value;
+  showChampionList();
+  loadChampionList();
+});
+
 document.querySelectorAll('#dataTable th[data-col]').forEach(th => {
   th.addEventListener('click', () => {
     const col = th.dataset.col;
@@ -715,13 +858,14 @@ app = Flask(__name__)
 
 @app.route("/")
 def index():
-    return render_template_string(PAGE_HTML)
+    return render_template_string(PAGE_HTML, default_source=DEFAULT_SOURCE)
 
 
 @app.route("/api/champions")
 def api_champions():
+    source = request.args.get("source", DEFAULT_SOURCE)
     try:
-        return jsonify(build_champion_list())
+        return jsonify(build_champion_list(source))
     except Exception as e:
         logger.error(f"构建英雄列表失败: {e}")
         return jsonify({"error": str(e)}), 500
@@ -729,8 +873,9 @@ def api_champions():
 
 @app.route("/api/champions/<champion_id>/augments")
 def api_champion_augments(champion_id: str):
+    source = request.args.get("source", DEFAULT_SOURCE)
     try:
-        return jsonify(build_champion_augments(champion_id))
+        return jsonify(build_champion_augments(champion_id, source))
     except Exception as e:
         logger.error(f"构建英雄 {champion_id} 符文数据失败: {e}")
         return jsonify({"error": str(e)}), 500

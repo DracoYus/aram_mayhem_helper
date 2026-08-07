@@ -117,6 +117,33 @@ def add_normalized_attr(
         item[new_attr] = round(item[new_attr], 4)
 
 
+def add_unit_scale_attr(
+    data_list: list,
+    perf_attr: str = "performance",
+    pop_attr: str = "popular",
+    perf_unit_attr: str = "performance_unit",
+    pop_unit_attr: str = "popular_unit",
+) -> None:
+    """
+    将 performance/popular 按组内 min-max 缩放到 [0,1]，写入新字段（不覆盖原始值）。
+
+    用于统一不同数据源的尺度：OP.GG 的 0~100 值与 aramkit 的 0~1 小数值
+    在进入贝叶斯收缩前统一到 [0,1]，保证 tau（由 popular 中位数计算）的
+    相对尺度一致，使双方打分结果尺度相同。
+
+    Args:
+        data_list: 目标列表（元素为字典），原地新增 unit 字段
+        perf_attr: 表现原始属性名
+        pop_attr: 流行度原始属性名
+        perf_unit_attr: 表现缩放后属性名
+        pop_unit_attr: 流行度缩放后属性名
+    """
+    if not data_list:
+        return
+    for src_attr, new_attr in ((perf_attr, perf_unit_attr), (pop_attr, pop_unit_attr)):
+        add_normalized_attr(data_list, src_attr, new_attr, normalize_type="min-max", min_max_norm=False)
+
+
 def add_bayesian_sigmoid_score_attr(
     data_list: list,
     perf_attr: str = "performance",

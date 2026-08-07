@@ -2,11 +2,12 @@ import argparse
 import logging
 
 from aram_mayhem_helper.algorithm.suggest import Suggest
+from aram_mayhem_helper.crawlers.aramkit.aramkit_crawler import AramkitCrawler
 from aram_mayhem_helper.crawlers.ddragon.champion_crawler import ChampionCrawler
 from aram_mayhem_helper.crawlers.opgg.aram_augment_crawler import AramAugmentCrawler
 from aram_mayhem_helper.league_client_api.live_data import get_current_champion_name
 from aram_mayhem_helper.ocr.ocr_tool import ocr_tool
-from aram_mayhem_helper.utils.data import champion_augment_data_dict, data
+from aram_mayhem_helper.utils.data import data, get_champion_augment_data
 from aram_mayhem_helper.utils.log_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,21 @@ def champion_crawler() -> None:
     logger.info("英雄数据爬取完成")
 
 
+def aramkit_crawler(start_id: int = 1, end_id: int = 999, dataset: str | None = None) -> None:
+    """
+    爬取 aramkit.com 英雄符文数据入口
+
+    Args:
+        start_id: 起始英雄ID
+        end_id: 结束英雄ID
+        dataset: 数据集（all 全体 / high 高分段），None 时取配置
+    """
+    logger.info(f"开始爬取 aramkit.com 英雄符文数据，从第{start_id}个到第{end_id}个英雄")
+    crawler = AramkitCrawler(dataset=dataset)
+    crawler.crawl(start_id, end_id)
+    logger.info("aramkit.com 英雄符文数据爬取完成")
+
+
 def main() -> None:
     """
     程序主入口，截图并推荐
@@ -47,11 +63,11 @@ def main() -> None:
         logger.error(f"无法找到英雄名称 '{champion_name}' 对应的ID")
         return
 
-    if champion_id not in champion_augment_data_dict:
+    champion_augment_data = get_champion_augment_data(champion_id)
+    if not champion_augment_data:
         logger.error(f"英雄ID {champion_id} 的符文数据不存在")
         return
 
-    champion_augment_data = champion_augment_data_dict[champion_id]
     suggest = Suggest(champion_augment_data)
     arguments = ocr_tool.get_augments()
     results = suggest.suggest(arguments)
@@ -79,6 +95,14 @@ def parse_args() -> argparse.Namespace:
     # champion_crawler 命令
     subparsers.add_parser("champion-crawler", help="爬取英雄数据")
 
+    # aramkit_crawler 命令
+    aramkit_parser = subparsers.add_parser("aramkit-crawler", help="爬取 aramkit.com 英雄符文数据")
+    aramkit_parser.add_argument("--start-id", type=int, default=1, help="起始英雄ID，默认1")
+    aramkit_parser.add_argument("--end-id", type=int, default=999, help="结束英雄ID，默认999")
+    aramkit_parser.add_argument(
+        "--dataset", type=str, choices=["all", "high"], default=None, help="数据集: all(全体)/high(高分段)，默认取配置"
+    )
+
     # main 命令
     subparsers.add_parser("main", help="执行主程序，截图并推荐")
 
@@ -98,6 +122,8 @@ if __name__ == "__main__":
         aram_augment_crawler(args.start_page, args.end_page)
     elif args.command == "champion-crawler":
         champion_crawler()
+    elif args.command == "aramkit-crawler":
+        aramkit_crawler(args.start_id, args.end_id, args.dataset)
     elif args.command == "main":
         main()
     elif args.command == "web":
@@ -110,5 +136,7 @@ if __name__ == "__main__":
         print("使用方法:")
         print("  python -m aram_mayhem_helper.cli aram-augment-crawler [--start-page START_PAGE] [--end-page END_PAGE]")
         print("  python -m aram_mayhem_helper.cli champion-crawler")
+        print("  python -m aram_mayhem_helper.cli aramkit-crawler [--start-id START_ID] [--end-id END_ID]")
+        print("                             [--dataset all|high]")
         print("  python -m aram_mayhem_helper.cli main")
         print("  python -m aram_mayhem_helper.cli web [--host HOST] [--port PORT]")

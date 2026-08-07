@@ -12,6 +12,7 @@ DEPLOY_DATA = Path(__file__).resolve().parent / "data"
 
 SRC_CHAMPIONS = ROOT / "data" / "ddragon" / "champions"
 SRC_AUGMENTS = ROOT / "data" / "opgg" / "aram_augments"
+SRC_ARAMKIT = ROOT / "data" / "aramkit"
 SRC_TRANS = ROOT / "data" / "augment_trans.json"
 SRC_CHAMPION_I18N = ROOT / "data" / "champions-names-i18n.json"
 SRC_AUGMENT_DESC = ROOT / "data" / "aram-mayhem-augments.zh_cn.json"
@@ -41,6 +42,13 @@ def main() -> None:
         shutil.copy2(f, dst_aug_dir / f.name)
         aug_count += 1
     print(f"已复制符文数据: {aug_count} 个文件")
+
+    # aramkit data — champion details + resources (可选，存在时才复制)
+    if SRC_ARAMKIT.exists():
+        dst_aramkit_dir = DEPLOY_DATA / "aramkit"
+        shutil.copytree(SRC_ARAMKIT, dst_aramkit_dir, dirs_exist_ok=True)
+        file_count = sum(1 for _ in SRC_ARAMKIT.rglob("*.json"))
+        print(f"已复制 aramkit 数据: {file_count} 个文件")
 
     # Translation files
     if SRC_TRANS.exists():

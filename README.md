@@ -94,8 +94,12 @@ uv run python -m aram_mayhem_helper.cli main
 # 爬取英雄数据
 uv run python -m aram_mayhem_helper.cli champion-crawler
 
-# 爬取符文数据
+# 爬取符文数据（OP.GG）
 uv run python -m aram_mayhem_helper.cli aram-augment-crawler
+
+# 爬取符文数据（aramkit.com，第二数据源）
+uv run python -m aram_mayhem_helper.cli aramkit-crawler
+# 可选参数: --start-id 1 --end-id 999 --dataset all|high（high 为高分段数据）
 
 # 启动网页应用，浏览符文数据
 uv run python -m aram_mayhem_helper.cli web
@@ -119,6 +123,14 @@ GUI界面提供以下功能：
 uv run python -m aram_mayhem_helper.cli web
 # 可选参数: --host 127.0.0.1 --port 5000
 ```
+
+页面顶部下拉可切换数据源（OP.GG / Aramkit），API 端点支持 `?source=opgg|aramkit` 参数。
+
+### 数据源说明
+
+- 支持 **OP.GG** 与 **aramkit.com** 两个独立数据源，互不影响、可随时切换
+- 默认数据源由 `config/config.toml` 中 `[data_source] source` 配置（`"opgg"` / `"aramkit"`），GUI/CLI 主流程读取该配置
+- 两源数据在引擎归一化层统一缩放到 0~1 后再打分，结果可直接对比
 
 浏览器打开 `http://127.0.0.1:5000` 即可使用。
 

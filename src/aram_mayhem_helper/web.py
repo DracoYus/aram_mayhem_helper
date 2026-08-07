@@ -3,12 +3,18 @@
 import json
 import logging
 
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, render_template_string, request
 
 from aram_mayhem_helper.utils.config import config
-from aram_mayhem_helper.utils.data import augment_tool, champion_augment_data_dict, data
+from aram_mayhem_helper.utils.data import (
+    data,
+    get_augment_info_for_source,
+    get_champion_augment_data,
+    get_champion_augment_data_dict,
+    get_default_source,
+)
 from aram_mayhem_helper.utils.i18n import champion_alias, champion_display_name
-from aram_mayhem_helper.utils.norm import add_bayesian_sigmoid_score_attr
+from aram_mayhem_helper.utils.norm import add_bayesian_sigmoid_score_attr, add_unit_scale_attr
 
 logger = logging.getLogger(__name__)
 
@@ -40,17 +46,22 @@ def _augment_description(augment_id: str) -> str:
     return desc
 
 
-def _build_champion_augments(champion_id: str) -> list[dict]:
+def _build_champion_augments(champion_id: str, source: str | None = None) -> list[dict]:
     """Build normalized augment data for a single champion.
 
-    Mirrors ``Suggest.__init__``: filters placeholder entries, applies IQR
+    Mirrors ``Suggest.__init__``: filters placeholder entries, applies unit
     min-max normalization + weighted-sum per augment level group.
+
+    Args:
+        champion_id: 英雄ID
+        source: 数据源（"opgg"/"aramkit"），None 时取配置默认
     """
+    source = source or get_default_source()
     champion_name = data.get_champion_name_by_id(champion_id)
     if not champion_name:
         return []
 
-    champ_aug_data = champion_augment_data_dict.get(champion_id)
+    champ_aug_data = get_champion_augment_data(champion_id, source)
     if not champ_aug_data:
         return []
 
@@ -75,7 +86,7 @@ def _build_champion_augments(champion_id: str) -> list[dict]:
         if item_id is None:
             continue
 
-        aug_info = augment_tool.get_augment_info(str(item_id))
+        aug_info = get_augment_info_for_source(source, str(item_id))
         if not aug_info:
             continue
 
@@ -99,10 +110,12 @@ def _build_champion_augments(champion_id: str) -> list[dict]:
 
     for level, level_items in by_level.items():
         try:
+            # 统一数据源尺度：performance/popular 先 min-max 缩放到 [0,1]
+            add_unit_scale_attr(level_items)
             add_bayesian_sigmoid_score_attr(
                 level_items,
-                perf_attr="performance",
-                pop_attr="popular",
+                perf_attr="performance_unit",
+                pop_attr="popular_unit",
                 new_attr="weighted_sum",
                 tau_factor=config.get("suggest", "shrinkage_tau_factor"),
                 sigmoid_steepness=config.get("suggest", "sigmoid_steepness"),
@@ -122,14 +135,20 @@ def _build_champion_augments(champion_id: str) -> list[dict]:
     return rows
 
 
-def _build_champion_list() -> list[dict]:
-    """Return a summary list of all champions with cached augment data."""
+def _build_champion_list(source: str | None = None) -> list[dict]:
+    """Return a summary list of all champions with cached augment data.
+
+    Args:
+        source: 数据源（"opgg"/"aramkit"），None 时取配置默认
+    """
+    source = source or get_default_source()
     champions: list[dict] = []
-    for cid in sorted(champion_augment_data_dict.keys(), key=int):
+    source_dict = get_champion_augment_data_dict(source)
+    for cid in sorted(source_dict.keys(), key=int):
         cname = data.get_champion_name_by_id(cid)
         if not cname:
             continue
-        champ_aug_data = champion_augment_data_dict.get(cid)
+        champ_aug_data = source_dict.get(cid)
         count = 0
         if champ_aug_data:
             try:
@@ -179,6 +198,11 @@ PAGE_HTML = r"""<!DOCTYPE html>
   }
   .top-bar .back-btn:hover { background: rgba(233, 69, 96, 0.15); }
   .top-bar .back-btn.show { display: inline-block; }
+  .top-bar .source-select {
+    padding: 5px 10px; border: 1px solid #0f3460; border-radius: 4px;
+    background: #1a1a2e; color: #e0e0e0; font-size: 0.85rem; cursor: pointer;
+  }
+  .top-bar .source-select:focus { outline: none; border-color: #e94560; }
   .top-bar .subtitle { font-size: 0.85rem; color: #a0a0b0; margin-left: auto; }
   .search-bar {
     padding: 10px 32px; background: #16213e; border-bottom: 1px solid #0f3460;
@@ -298,6 +322,10 @@ PAGE_HTML = r"""<!DOCTYPE html>
 <div class="top-bar">
   <button class="back-btn" id="backBtn" onclick="showChampionList()">← 返回</button>
   <h1>ARAM 符文数据浏览</h1>
+  <select id="sourceSel" class="source-select" title="数据源">
+    <option value="opgg" {{ 'selected' if default_source == 'opgg' }}>OP.GG</option>
+    <option value="aramkit" {{ 'selected' if default_source == 'aramkit' }}>Aramkit</option>
+  </select>
   <span class="subtitle" id="headerSub"></span>
 </div>
 
@@ -355,10 +383,13 @@ let allChampions = [];
 let currentAugments = [];
 let sortCol = 'weighted_sum';
 let sortDir = -1;
+const sourceSel = document.getElementById('sourceSel');
+let currentSource = sourceSel.value;
+const SOURCE_LABELS = { 'opgg': 'OP.GG', 'aramkit': 'Aramkit' };
 
 async function loadChampionList() {
   try {
-    const resp = await fetch('/api/champions');
+    const resp = await fetch('/api/champions?source=' + encodeURIComponent(currentSource));
     allChampions = await resp.json();
     renderChampionGrid();
   } catch (err) {
@@ -387,12 +418,13 @@ async function showChampionDetail(cid, cname) {
   document.getElementById('championView').classList.add('hidden');
   document.getElementById('detailView').classList.add('show');
   document.getElementById('backBtn').classList.add('show');
-  document.getElementById('headerSub').textContent = '— ' + cname;
+  const srcLabel = SOURCE_LABELS[currentSource] || currentSource;
+  document.getElementById('headerSub').textContent = '— ' + cname + ' (' + srcLabel + ')';
   document.getElementById('detailCount').textContent = '加载中…';
   document.querySelector('#dataTable tbody').innerHTML = '';
 
   try {
-    const resp = await fetch('/api/champions/' + cid + '/augments');
+    const resp = await fetch('/api/champions/' + cid + '/augments?source=' + encodeURIComponent(currentSource));
     currentAugments = await resp.json();
     sortCol = 'weighted_sum';
     sortDir = -1;
@@ -518,6 +550,12 @@ document.querySelector('#dataTable tbody').addEventListener('mouseleave', e => {
 // --- Event listeners ---
 document.getElementById('champSearch').addEventListener('input', renderChampionGrid);
 
+sourceSel.addEventListener('change', () => {
+  currentSource = sourceSel.value;
+  showChampionList();
+  loadChampionList();
+});
+
 document.querySelectorAll('#dataTable th[data-col]').forEach(th => {
   th.addEventListener('click', () => {
     const col = th.dataset.col;
@@ -542,14 +580,15 @@ app = Flask(__name__)
 @app.route("/")
 def index():
     """Serve the main page."""
-    return render_template_string(PAGE_HTML)
+    return render_template_string(PAGE_HTML, default_source=get_default_source())
 
 
 @app.route("/api/champions")
 def api_champions():
     """Return a summary list of all champions with cached augment data."""
+    source = request.args.get("source", get_default_source())
     try:
-        return jsonify(_build_champion_list())
+        return jsonify(_build_champion_list(source))
     except Exception as e:
         logger.error(f"构建英雄列表失败: {e}")
         return jsonify({"error": str(e)}), 500
@@ -558,8 +597,9 @@ def api_champions():
 @app.route("/api/champions/<champion_id>/augments")
 def api_champion_augments(champion_id: str):
     """Return normalized augment data for a specific champion."""
+    source = request.args.get("source", get_default_source())
     try:
-        return jsonify(_build_champion_augments(champion_id))
+        return jsonify(_build_champion_augments(champion_id, source))
     except Exception as e:
         logger.error(f"构建英雄 {champion_id} 符文数据失败: {e}")
         return jsonify({"error": str(e)}), 500
