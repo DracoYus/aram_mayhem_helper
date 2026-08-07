@@ -119,7 +119,6 @@ class TestCliMain:
 class TestRecommend:
     def test_no_game_returns_gracefully(self, monkeypatch) -> None:
         monkeypatch.setattr(cli, "get_current_champion_name", lambda: None)
-        monkeypatch.setattr(cli, "ocr_tool", type("OCR", (), {"get_augments": lambda self: []})())
         cli.recommend()  # 不应抛异常
 
     def test_error_is_caught_and_logged(self, monkeypatch) -> None:

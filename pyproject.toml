@@ -6,13 +6,20 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "flask>=3.1.0",
+    "numpy>=1.26,<2.0",  # paddleocr 2.9.1 锁定 numpy<2.0
+    "requests>=2.32.5",
+]
+authors = [{ name = "DracoYu", email = "876319691@qq.com" }]
+
+[project.optional-dependencies]
+# 屏幕 OCR 识别（GUI / recommend 命令需要）；web 部署无需安装
+ocr = [
     "paddleocr==2.9.1",
     "paddlepaddle==2.6.2",
-    "requests>=2.32.5",
+    "Pillow>=10.0.0",
     "screeninfo>=0.8.1",
     "setuptools>=82.0.0",
 ]
-authors = [{ name = "DracoYu", email = "876319691@qq.com" }]
 
 [project.scripts]
 aram-mayhem-helper = "aram_mayhem_helper.cli:cli_main"
@@ -27,7 +34,10 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
+    "mypy>=1.14",
     "pytest>=8.0.0",
+    "pytest-cov>=6.0.0",
+    "requests-mock>=1.12",
     "ruff>=0.15.1",
 ]
 

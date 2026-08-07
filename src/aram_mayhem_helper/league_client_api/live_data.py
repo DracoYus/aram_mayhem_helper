@@ -3,19 +3,19 @@ import logging
 import requests
 import urllib3
 
-# 禁用 SSL 警告（游戏客户端用自签名证书）
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 logger = logging.getLogger(__name__)
 
 
-def get_current_champion_name():
+def get_current_champion_name() -> str | None:
     """
     获取正在运行的对局中自己的英雄 ID 和名称
     :return: champion_name 或 None
     """
     # Live Client Data API 地址（固定端口 2999）
     base_url = "https://127.0.0.1:2999/liveclientdata/allgamedata"
+
+    # 禁用 SSL 警告（游戏客户端用自签名证书，收敛到函数内避免模块导入副作用）
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     try:
         # 1. 获取当前活跃玩家数据

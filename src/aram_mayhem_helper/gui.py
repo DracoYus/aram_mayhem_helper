@@ -12,7 +12,7 @@ from aram_mayhem_helper.algorithm.suggest import Suggest
 from aram_mayhem_helper.crawlers.ddragon.champion_crawler import ChampionCrawler
 from aram_mayhem_helper.crawlers.opgg.aram_augment_crawler import AramAugmentCrawler
 from aram_mayhem_helper.league_client_api.live_data import get_current_champion_name
-from aram_mayhem_helper.ocr.ocr_tool import ocr_tool
+from aram_mayhem_helper.ocr.ocr_tool import get_ocr_tool
 from aram_mayhem_helper.utils.config import get_config
 from aram_mayhem_helper.utils.data import get_game_data
 from aram_mayhem_helper.utils.log_config import setup_logging
@@ -117,7 +117,7 @@ def _recognize_worker() -> None:
 
     augments = None
     try:
-        augments = ocr_tool.get_augments()
+        augments = get_ocr_tool().get_augments()
         augments_info = suggest.suggest(augments)
         for augment_info in augments_info:
             logger.info(str(augment_info))

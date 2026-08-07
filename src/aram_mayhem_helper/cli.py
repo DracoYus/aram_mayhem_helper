@@ -6,7 +6,7 @@ from aram_mayhem_helper.crawlers.aramkit.aramkit_crawler import AramkitCrawler
 from aram_mayhem_helper.crawlers.ddragon.champion_crawler import ChampionCrawler
 from aram_mayhem_helper.crawlers.opgg.aram_augment_crawler import AramAugmentCrawler
 from aram_mayhem_helper.league_client_api.live_data import get_current_champion_name
-from aram_mayhem_helper.ocr.ocr_tool import ocr_tool
+from aram_mayhem_helper.ocr.ocr_tool import get_ocr_tool
 from aram_mayhem_helper.utils.config import get_config
 from aram_mayhem_helper.utils.data import get_game_data
 from aram_mayhem_helper.utils.log_config import setup_logging
@@ -71,7 +71,7 @@ def recommend() -> None:
             return
 
         suggest = Suggest(champion_id, game_data, thresholds=get_config().suggest)
-        arguments = ocr_tool.get_augments()
+        arguments = get_ocr_tool().get_augments()
         results = suggest.suggest(arguments)
         if results:
             for result in results:

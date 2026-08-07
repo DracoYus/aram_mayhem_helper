@@ -1,13 +1,36 @@
-import ctypes
+"""屏幕 OCR 识别工具。
+
+PaddleOCR/PIL/screeninfo 均在方法内懒导入：模块导入本身不加载模型、
+不查询屏幕（无导入期副作用），web 部署无需安装 ``[ocr]`` 依赖组。
+"""
+
 import logging
-from typing import List, Optional, Tuple, Union
+from typing import Any
 
 import numpy as np
-from paddleocr import PaddleOCR
-from PIL import ImageGrab
-from screeninfo import get_monitors
 
 from aram_mayhem_helper.utils.retry import retry_on_exception
+
+# 屏幕区域百分比坐标（left%, top%, right%, bottom%），对应游戏内三个符文槽位
+REGIONS: list[tuple[float, float, float, float]] = [
+    (0.24, 0.37, 0.39, 0.42),  # 第一个符文位置
+    (0.42, 0.37, 0.57, 0.42),  # 第二个符文位置
+    (0.61, 0.37, 0.76, 0.42),  # 第三个符文位置
+]
+
+
+def region_to_pixel(
+    region: tuple[float, float, float, float],
+    screen_width: int,
+    screen_height: int,
+) -> tuple[int, int, int, int]:
+    """百分比区域 → 像素坐标 (left, top, right, bottom)。"""
+    return (
+        int(region[0] * screen_width),
+        int(region[1] * screen_height),
+        int(region[2] * screen_width),
+        int(region[3] * screen_height),
+    )
 
 
 class OCRTool:
@@ -18,7 +41,7 @@ class OCRTool:
 
     def __init__(self, lang: str = "ch", use_angle_cls: bool = False, use_gpu: bool = False, show_log: bool = False):
         """
-        初始化 OCR 工具
+        初始化 OCR 工具（不加载模型，模型在首次识别时懒加载）
         :param lang: 识别语言，默认中英文混合("ch")，英文可设为"en"
         :param use_angle_cls: 是否启用方向分类（识别旋转文本）
         :param use_gpu: 是否使用 GPU 加速
@@ -29,33 +52,44 @@ class OCRTool:
         self.use_gpu = use_gpu
         self.show_log = show_log
         self.logger = logging.getLogger(__name__)
-        self.user32 = ctypes.windll.user32
-        self.screen_width = get_monitors()[0].width
-        self.screen_height = get_monitors()[0].height
-        self.REGIONS = [
-            (0.24, 0.37, 0.39, 0.42),  # 第一个符文位置
-            (0.42, 0.37, 0.57, 0.42),  # 第二个符文位置
-            (0.61, 0.37, 0.76, 0.42),  # 第三个符文位置
-        ]
+        self._ocr: Any = None
+        self._screen_size: tuple[int, int] | None = None
 
-        # 初始化 PaddleOCR 模型
-        self._ocr: Optional[PaddleOCR] = PaddleOCR(
-            use_angle_cls=self.use_angle_cls,
-            lang=self.lang,
-            show_log=self.show_log,
-            use_gpu=self.use_gpu,
-            det_db_thresh=0.2,
-            det_db_box_thresh=0.3,
-            det_db_unclip_ratio=2.0,
-            det_db_score_mode="fast",  # 加快检测速度，不影响合并
-        )
+    def _get_ocr(self) -> Any:
+        """懒加载 PaddleOCR 模型实例。"""
+        if self._ocr is None:
+            from paddleocr import PaddleOCR
 
-    def capture_screen(self, bbox: Tuple[int, int, int, int]) -> np.ndarray:
+            self._ocr = PaddleOCR(
+                use_angle_cls=self.use_angle_cls,
+                lang=self.lang,
+                show_log=self.show_log,
+                use_gpu=self.use_gpu,
+                det_db_thresh=0.2,
+                det_db_box_thresh=0.3,
+                det_db_unclip_ratio=2.0,
+                det_db_score_mode="fast",  # 加快检测速度，不影响合并
+            )
+        return self._ocr
+
+    @property
+    def screen_size(self) -> tuple[int, int]:
+        """主显示器尺寸 (width, height)，懒查询。"""
+        if self._screen_size is None:
+            from screeninfo import get_monitors
+
+            monitor = get_monitors()[0]
+            self._screen_size = (monitor.width, monitor.height)
+        return self._screen_size
+
+    def capture_screen(self, bbox: tuple[int, int, int, int]) -> np.ndarray:
         """
         截取屏幕指定区域
         :param bbox: 屏幕区域坐标 (left, top, right, bottom)
-        :return: 截图的 numpy 数组（RGB 格式）
+        :return: 截图的 numpy 数组（灰度）
         """
+        from PIL import ImageGrab
+
         try:
             screenshot = ImageGrab.grab(bbox).convert("L")
             return np.array(screenshot)
@@ -63,15 +97,14 @@ class OCRTool:
             raise RuntimeError(f"屏幕截图失败: {str(e)}")
 
     @retry_on_exception(max_retries=2, delay=0.5, backoff_factor=1.5, exceptions=(RuntimeError,))
-    def recognize_text(self, image: Union[np.ndarray, str]) -> List[dict]:
+    def recognize_text(self, image: np.ndarray | str) -> list[dict]:
         """
         识别图像中的文本
         :param image: 图像输入，支持 numpy 数组（截图结果）或 本地图片路径
         :return: 识别结果列表，每个元素为 {"text": "文本", "confidence": 置信度, "bbox": 坐标}
         """
-
         try:
-            result = self._ocr.ocr(image, cls=self.use_angle_cls)
+            result = self._get_ocr().ocr(image, cls=self.use_angle_cls)
         except Exception as e:
             raise RuntimeError(f"OCR 识别失败: {str(e)}")
 
@@ -88,7 +121,7 @@ class OCRTool:
                 )
         return parsed_result
 
-    def capture_and_recognize(self, bbox: Tuple[int, int, int, int]) -> str:
+    def capture_and_recognize(self, bbox: tuple[int, int, int, int]) -> str:
         """
         截取屏幕指定区域并识别文本（一体化方法）
         :param bbox: 屏幕区域坐标 (left, top, right, bottom)
@@ -99,26 +132,23 @@ class OCRTool:
         texts = [item["text"].strip() for item in results]
         return "".join(texts)
 
-    def _pct_to_pixel(self, bbox_pct: Tuple[float, float, float, float]) -> Tuple[int, int, int, int]:
-        return (
-            int(bbox_pct[0] * self.screen_width),
-            int(bbox_pct[1] * self.screen_height),
-            int(bbox_pct[2] * self.screen_width),
-            int(bbox_pct[3] * self.screen_height),
-        )
-
-    def get_augments(self) -> List[str]:
+    def get_augments(self) -> list[str]:
         """
         获取当前屏幕中的符文选项
         :return: 获取到的符文选项列表
         """
-        text_list = [self.capture_and_recognize(self._pct_to_pixel(regin)) for regin in self.REGIONS]
+        width, height = self.screen_size
+        text_list = [self.capture_and_recognize(region_to_pixel(region, width, height)) for region in REGIONS]
         self.logger.info(f"识别到符文选项: {text_list}")
         return text_list
 
 
-ocr_tool = OCRTool()
+_ocr_tool_singleton: OCRTool | None = None
 
-if __name__ == "__main__":
-    result = ocr_tool.get_augments()
-    print(result)
+
+def get_ocr_tool() -> OCRTool:
+    """懒加载 OCR 工具单例（替代旧导入期初始化 PaddleOCR 模型的副作用）。"""
+    global _ocr_tool_singleton
+    if _ocr_tool_singleton is None:
+        _ocr_tool_singleton = OCRTool()
+    return _ocr_tool_singleton
