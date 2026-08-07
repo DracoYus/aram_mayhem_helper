@@ -145,6 +145,31 @@ class GameData:
 
     # ── 符文条目 ────────────────────────────────────────────────────────
 
+    def _augment_data_path(self, champion_id: str, source: str) -> Path:
+        """该英雄在指定数据源下的条目文件路径。"""
+        if source == "aramkit":
+            return self._config.aramkit_augment_dir / f"{champion_id}.json"
+        return self._config.opgg_augment_dir / f"{champion_id}.json"
+
+    def available_source(self, champion_id: str, preferred: str | None = None) -> str | None:
+        """返回该英雄首个有符文数据的数据源（默认源优先，缺数据时回退另一源）。
+
+        数据源切换后部分英雄仅存在于旧源（如 aramkit 爬取未覆盖的英雄），
+        直接按默认源读取会抛 ``FileNotFoundError`` 中断推荐流程；本方法先检查
+        文件存在性、静默跳过缺失的源，两个源都没有数据时返回 None。
+        """
+        preferred = preferred or self.default_source()
+        other = "opgg" if preferred == "aramkit" else "aramkit"
+        for source in (preferred, other):
+            if not self._augment_data_path(champion_id, source).exists():
+                continue
+            try:
+                if self.augment_entries(champion_id, source) is not None:
+                    return source
+            except (FileNotFoundError, json.JSONDecodeError):
+                continue
+        return None
+
     def augment_entries(self, champion_id: str, source: str | None = None) -> list[dict[str, Any]] | None:
         """返回该英雄的引擎标准符文条目。
 
@@ -162,35 +187,22 @@ class GameData:
         cache_key = (champion_id, source)
         if cache_key in self._entries_cache:
             return self._entries_cache[cache_key]
+        champion_data_path = self._augment_data_path(champion_id, source)
+        try:
+            with open(champion_data_path, "r", encoding="utf-8") as f:
+                raw_data = json.load(f)
+        except FileNotFoundError:
+            self.logger.error(f"未找到英雄符文数据文件: {champion_data_path}")
+            raise
+        except json.JSONDecodeError as e:
+            self.logger.error(f"英雄符文数据文件格式错误: {champion_data_path}, 错误: {str(e)}")
+            raise
+        except Exception as e:
+            self.logger.error(f"读取英雄符文数据文件时发生错误: {champion_data_path}, 错误: {str(e)}")
+            raise
         if source == "aramkit":
-            champion_data_path = self._config.aramkit_augment_dir / f"{champion_id}.json"
-            try:
-                with open(champion_data_path, "r", encoding="utf-8") as f:
-                    raw_data = json.load(f)
-            except FileNotFoundError:
-                self.logger.error(f"未找到英雄符文数据文件: {champion_data_path}")
-                raise
-            except json.JSONDecodeError as e:
-                self.logger.error(f"英雄符文数据文件格式错误: {champion_data_path}, 错误: {str(e)}")
-                raise
-            except Exception as e:
-                self.logger.error(f"读取英雄符文数据文件时发生错误: {champion_data_path}, 错误: {str(e)}")
-                raise
             entries = convert_augment_records(raw_data.get("augments", {}).get("all", []))
         else:
-            champion_data_path = self._config.opgg_augment_dir / f"{champion_id}.json"
-            try:
-                with open(champion_data_path, "r", encoding="utf-8") as f:
-                    raw_data = json.load(f)
-            except FileNotFoundError:
-                self.logger.error(f"未找到英雄符文数据文件: {champion_data_path}")
-                raise
-            except json.JSONDecodeError as e:
-                self.logger.error(f"英雄符文数据文件格式错误: {champion_data_path}, 错误: {str(e)}")
-                raise
-            except Exception as e:
-                self.logger.error(f"读取英雄符文数据文件时发生错误: {champion_data_path}, 错误: {str(e)}")
-                raise
             data = raw_data.get("data")
             if data is None:
                 self.logger.warning(f"英雄符文数据文件缺少 'data' 字段: champion_id={champion_id}")

@@ -34,6 +34,11 @@ def print_log(log_text: str, log_area: scrolledtext.ScrolledText) -> None:
     log_area.update()  # 实时刷新界面
 
 
+# 显式 logger 名而非 __name__：用户启动器以直接脚本方式运行 gui.py 时
+# __name__ == "__main__"，日志会绕过 "aram_mayhem_helper" 的处理器而全部丢失
+logger = logging.getLogger("aram_mayhem_helper.gui")
+
+
 def _enable_dpi_awareness() -> None:
     """Enable system DPI awareness on Windows to prevent blurry bitmap scaling.
 
@@ -94,7 +99,6 @@ def recognize_augment(
 
 def _recognize_worker() -> None:
     """后台执行：识别当前英雄 → OCR 读取符文 → 生成推荐。"""
-    logger = logging.getLogger(__name__)
     game_data = get_game_data()
 
     try:
@@ -106,11 +110,12 @@ def _recognize_worker() -> None:
         if not champion_id:
             logger.error(f"无法找到英雄 '{champion_name}' 对应的ID")
             return
-        if game_data.augment_entries(champion_id) is None:
-            logger.error(f"英雄ID {champion_id} ({champion_name}) 的符文数据不存在")
+        source = game_data.available_source(champion_id)
+        if source is None:
+            logger.error(f"英雄ID {champion_id} ({champion_name}) 在 opgg/aramkit 数据源中都没有符文数据")
             return
-        suggest = Suggest(champion_id, game_data, thresholds=get_config().suggest)
-        logger.info(f"当前英雄：{champion_name}")
+        suggest = Suggest(champion_id, game_data, source=source, thresholds=get_config().suggest)
+        logger.info(f"当前英雄：{champion_name}（数据源: {source}）")
     except Exception as e:
         logger.error(f"识别英雄出错：{str(e)}")
         return
@@ -119,8 +124,11 @@ def _recognize_worker() -> None:
     try:
         augments = get_ocr_tool().get_augments()
         augments_info = suggest.suggest(augments)
-        for augment_info in augments_info:
-            logger.info(str(augment_info))
+        if augments_info:
+            for augment_info in augments_info:
+                logger.info(str(augment_info))
+        else:
+            logger.warning("未能生成任何符文建议（OCR 名称未匹配到当前英雄的符文数据）")
     except Exception as e:
         logger.error(f"「识别符文」操作出错：{str(e)}")
         if augments is not None:
@@ -158,7 +166,7 @@ def _poll_log_queue(
     except Exception:
         _finish_task(log_area, buttons, on_done)
         print_log("日志轮询过程中发生错误，已恢复按钮状态", log_area)
-        logging.getLogger(__name__).exception("日志轮询异常")
+        logger.exception("日志轮询异常")
         return
 
     log_area.after(100, _poll_log_queue, log_queue, log_area, buttons, on_done)
@@ -233,9 +241,9 @@ def fetch_champion_data(
         crawler = ChampionCrawler()
         success = crawler.crawl()
         if success:
-            logging.getLogger(__name__).info("英雄数据抓取完成：成功")
+            logger.info("英雄数据抓取完成：成功")
         else:
-            logging.getLogger(__name__).warning("英雄数据抓取完成：失败")
+            logger.warning("英雄数据抓取完成：失败")
 
     _run_in_background(
         _crawl,
@@ -275,9 +283,9 @@ def fetch_augment_data(
         fail = sum(1 for v in results.values() if not v)
         msg = f"符文数据抓取完成：成功 {success}" + (f"，失败 {fail}" if fail else "")
         if fail:
-            logging.getLogger(__name__).warning(msg)
+            logger.warning(msg)
         else:
-            logging.getLogger(__name__).info(msg)
+            logger.info(msg)
 
     _run_in_background(
         _crawl,

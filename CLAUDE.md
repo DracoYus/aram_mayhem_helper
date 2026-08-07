@@ -79,10 +79,11 @@ Layering: entry points (cli/gui/web) → algorithm → utils/crawlers. Dependenc
 
 1. `live_data.get_current_champion_name()` queries League Client API (`https://127.0.0.1:2999/liveclientdata/allgamedata`) for the player's current champion
 2. `GameData.champion_id_by_name()` maps champion name → ID (from Data Dragon JSON in `data/ddragon/champions/`)
-3. `GameData.augment_entries()` loads that champion's augment stats (opgg reads `data` field; aramkit reads `augments.all` + `convert_augment_records`, both per-(champion, source) cached)
-4. `Suggest` runs `build_scored_groups()`: filters placeholders → groups by level → per group `add_unit_scale_attr` (min-max to [0,1]) + `add_bayesian_sigmoid_score_attr` (τ = median(pop>0) × tau_factor, weighted mean/std, sigmoid squash; `weighted_sum` + `performance_norm`/`popular_norm` percentiles)
-5. `OCRTool` screenshots 3 predefined screen regions (percentage-based) and runs PaddleOCR to read augment names
-6. `Suggest.suggest()` matches OCR results → augment IDs → returns recommendation strings ("快选"/"考虑"/"垃圾")
+3. `GameData.available_source()` resolves the data source: default preferred, falls back to the other source when that champion has no file there (avoids `FileNotFoundError` hard-fail for champions missing from one source's crawl)
+4. `GameData.augment_entries()` loads that champion's augment stats (opgg reads `data` field; aramkit reads `augments.all` + `convert_augment_records`, both per-(champion, source) cached)
+5. `Suggest` runs `build_scored_groups()`: filters placeholders → groups by level → per group `add_unit_scale_attr` (min-max to [0,1]) + `add_bayesian_sigmoid_score_attr` (τ = median(pop>0) × tau_factor, weighted mean/std, sigmoid squash; `weighted_sum` + `performance_norm`/`popular_norm` percentiles)
+6. `OCRTool` screenshots 3 predefined screen regions (percentage-based) and runs PaddleOCR to read augment names
+7. `Suggest.suggest()` matches OCR results → augment IDs → returns recommendation strings ("快选"/"考虑"/"垃圾")
 
 **Web flow:**
 

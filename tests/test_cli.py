@@ -127,3 +127,51 @@ class TestRecommend:
 
         monkeypatch.setattr(cli, "get_current_champion_name", boom)
         cli.recommend()  # 不应向上传播异常
+
+    def test_falls_back_to_opgg_when_aramkit_missing(
+        self, monkeypatch, game_data, app_config
+    ) -> None:
+        """默认源(aramkit)缺数据时回退 opgg 并传给 Suggest（修复推荐硬中断）。"""
+        calls: list[tuple[str, str | None]] = []
+        captured_ocr: list[list[str]] = []
+
+        class _FakeSuggest:
+            def __init__(self, champion_id: str, data, *, source=None, thresholds=None) -> None:
+                calls.append((champion_id, source))
+
+            def suggest(self, augments: list[str]) -> list[str]:
+                return ["快选符文：泰坦的坚决，别的不用看了"]
+
+        class _FakeOcr:
+            def get_augments(self) -> list[str]:
+                captured_ocr.append(["泰坦的坚决"])
+                return captured_ocr[-1]
+
+        monkeypatch.setattr(cli, "get_current_champion_name", lambda: "Ashe")  # fixture: 22
+        monkeypatch.setattr(cli, "get_game_data", lambda: game_data)
+        monkeypatch.setattr(cli, "get_config", lambda: app_config)
+        monkeypatch.setattr(cli, "Suggest", _FakeSuggest)
+        monkeypatch.setattr(cli, "get_ocr_tool", lambda: _FakeOcr())
+        cli.recommend()
+        # 22 无 aramkit fixture → 回退 opgg
+        assert calls == [("22", "opgg")]
+        assert captured_ocr == [["泰坦的坚决"]]
+
+    def test_no_data_in_either_source_returns_gracefully(
+        self, monkeypatch, game_data, app_config, caplog
+    ) -> None:
+        """266 在 opgg/aramkit 均无数据 → 记录错误并返回，不调用 Suggest/OCR。"""
+        calls: list[tuple[str, str | None]] = []
+
+        class _FakeSuggest:
+            def __init__(self, champion_id: str, data, *, source=None, thresholds=None) -> None:
+                calls.append((champion_id, source))
+
+        monkeypatch.setattr(cli, "get_current_champion_name", lambda: "Aatrox")  # fixture: 266
+        monkeypatch.setattr(cli, "get_game_data", lambda: game_data)
+        monkeypatch.setattr(cli, "get_config", lambda: app_config)
+        monkeypatch.setattr(cli, "Suggest", _FakeSuggest)
+        with caplog.at_level("ERROR", logger="aram_mayhem_helper.cli"):
+            cli.recommend()
+        assert calls == []
+        assert any("都没有符文数据" in r.message for r in caplog.records)

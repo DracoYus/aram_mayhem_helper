@@ -66,11 +66,12 @@ def recommend() -> None:
             logger.error(f"无法找到英雄名称 '{champion_name}' 对应的ID")
             return
 
-        if game_data.augment_entries(champion_id) is None:
-            logger.error(f"英雄ID {champion_id} 的符文数据不存在")
+        source = game_data.available_source(champion_id)
+        if source is None:
+            logger.error(f"英雄ID {champion_id} ({champion_name}) 在 opgg/aramkit 数据源中都没有符文数据")
             return
 
-        suggest = Suggest(champion_id, game_data, thresholds=get_config().suggest)
+        suggest = Suggest(champion_id, game_data, source=source, thresholds=get_config().suggest)
         arguments = get_ocr_tool().get_augments()
         results = suggest.suggest(arguments)
         if results:

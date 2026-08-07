@@ -76,6 +76,33 @@ class TestGameDataAugmentEntries:
             game_data.augment_entries_all("opgg")
 
 
+class TestGameDataAvailableSource:
+    """推荐流程的数据源解析：默认源缺数据时回退另一源（修复默认源切换后部分英雄硬中断）。"""
+
+    def test_prefers_default_source_when_both_exist(self, game_data) -> None:
+        # 103 在 opgg 与 aramkit 都有数据
+        assert game_data.available_source("103", preferred="aramkit") == "aramkit"
+        assert game_data.available_source("103", preferred="opgg") == "opgg"
+
+    def test_falls_back_to_other_source_when_default_missing(self, game_data) -> None:
+        # 22 只有 opgg 数据：默认 aramkit 缺失时回退 opgg
+        assert game_data.available_source("22", preferred="aramkit") == "opgg"
+
+    def test_returns_none_when_no_source_has_data(self, game_data) -> None:
+        # 266 在两个数据源都没有文件
+        assert game_data.available_source("266", preferred="aramkit") is None
+
+    def test_no_preferred_uses_config_default(self, game_data) -> None:
+        assert game_data.available_source("103") == game_data.default_source()
+
+    def test_fallback_does_not_raise_on_corrupt_file(self, game_data, fixture_data_dir) -> None:
+        # 默认源文件损坏时静默跳过，回退到另一源
+        (fixture_data_dir / "aramkit" / "aram_augments" / "all" / "103.json").write_text(
+            "{not json", encoding="utf-8"
+        )
+        assert game_data.available_source("103", preferred="aramkit") == "opgg"
+
+
 class TestGameDataLookup:
     def test_augment_info_translation_first(self, game_data) -> None:
         assert game_data.augment_info("1001", "opgg") == {"name": "泰坦的坚决", "level": "2"}
