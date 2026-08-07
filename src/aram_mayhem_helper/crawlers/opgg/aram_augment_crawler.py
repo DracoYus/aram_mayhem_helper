@@ -1,132 +1,45 @@
-"""爬虫模块，用于从指定URL获取数据并保存为JSON格式到本地."""
+"""OP.GG 英雄符文数据爬虫。"""
 
-import json
 import logging
 import time
-from pathlib import Path
-from typing import Any, Dict, Optional
 
-import requests
-
-from aram_mayhem_helper.utils.config import config
+from aram_mayhem_helper.crawlers.base import BaseCrawler
+from aram_mayhem_helper.utils.config import AppConfig, get_config
 from aram_mayhem_helper.utils.data import get_game_data
-from aram_mayhem_helper.utils.retry import retry_on_exception
 
 
-class AramAugmentCrawler:
-    """用于从指定URL爬取JSON数据并保存到本地的爬虫类."""
+class AramAugmentCrawler(BaseCrawler):
+    """从 OP.GG API 爬取各英雄的 aram-augments 数据。"""
 
-    def __init__(self):
+    def __init__(self, config: AppConfig | None = None):
         """
-        初始化爬虫
-
         Args:
-            save_directory: 保存数据的目录，默认为'data'
+            config: 应用配置，None 时取全局配置
         """
-        self.timeout = config.get("crawler", "timeout", default=30)
-        self.delay_second = config.get("crawler", "delay_second", default=1)
-        self.save_directory = config.data_path / Path(config.get("crawler", "opgg", "aram_augment", "save_directory"))
-        self.base_url = config.get("crawler", "opgg", "aram_augment", "base_url")
-        self.session = requests.Session()
-
-        # 设置请求头
-        self.session.headers.update({"User-Agent": config.get("crawler", "user_agent")})
-
-        # 创建保存目录
-        self.save_directory.mkdir(parents=True, exist_ok=True)
-
-        # 配置日志
-        logging.basicConfig(level=logging.INFO)
+        app_config = config or get_config()
+        super().__init__(
+            timeout=app_config.crawler.timeout,
+            delay_second=app_config.crawler.delay_second,
+            save_directory=app_config.opgg_augment_dir,
+            base_url=app_config.crawler.opgg_augment.base_url,
+            user_agent=app_config.crawler.user_agent,
+        )
         self.logger = logging.getLogger(__name__)
 
-    @retry_on_exception(max_retries=3, delay=1.0, backoff_factor=2.0, exceptions=(requests.RequestException,))
-    def fetch_json(self, url: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[Any, Any]]:
+    def batch_crawl(self, start_id: int = 1, end_id: int = 999) -> dict[str, bool]:
         """
-        从指定URL获取JSON数据
-
-        Args:
-            url: 目标URL
-            params: 请求参数
-
-        Returns:
-            JSON响应数据，如果失败则返回None
-        """
-        try:
-            response = self.session.get(url, params=params, timeout=self.timeout)
-            response.raise_for_status()  # 检查HTTP错误
-
-            # 尝试解析JSON
-            data = response.json()
-            self.logger.info(f"成功从 {url} 获取JSON数据")
-            return data
-        except json.JSONDecodeError:
-            self.logger.error(f"无法解析 {url} 的JSON数据")
-            return None
-        except Exception as e:
-            self.logger.error(f"请求 {url} 时发生错误: {str(e)}")
-            return None
-
-    def save_to_file(self, data: Dict[Any, Any], filename: str) -> bool:
-        """
-        将数据保存到本地JSON文件
-
-        Args:
-            data: 要保存的数据
-            filename: 文件名
-
-        Returns:
-            保存成功返回True，否则返回False
-        """
-        try:
-            filepath = self.save_directory / f"{filename}.json"
-
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-
-            self.logger.info(f"数据已保存到 {filepath}")
-            return True
-        except Exception as e:
-            self.logger.error(f"保存文件时发生错误: {str(e)}")
-            return False
-
-    def crawl_and_save(self, url: str, filename: str, params: Optional[Dict[str, Any]] = None) -> bool:
-        """
-        爬取URL数据并保存到本地
-
-        Args:
-            url: 目标URL
-            filename: 保存的文件名（不包含.json后缀）
-            params: 请求参数
-
-        Returns:
-            成功返回True，否则返回False
-        """
-        self.logger.info(f"开始爬取数据: {url}")
-
-        # 获取数据
-        data = self.fetch_json(url, params)
-
-        if data is not None:
-            # 保存数据
-            return self.save_to_file(data, filename)
-        else:
-            self.logger.error(f"未能从 {url} 获取有效数据")
-            return False
-
-    def batch_crawl(self, start_id=1, end_id=999) -> Dict[str, bool]:
-        """
-        批量爬取多个URL
+        批量爬取多个英雄的符文数据。
 
         Args:
             start_id: 起始英雄ID
             end_id: 结束英雄ID
 
         Returns:
-            包含每个URL爬取结果的字典，键为英雄ID，值为爬取结果
+            包含每个英雄爬取结果的字典，键为英雄ID，值为爬取结果
         """
         self.logger.info(f"开始批量爬取英雄ID范围: {start_id} - {end_id}")
-        results = {}
-        failed_ids = []
+        results: dict[str, bool] = {}
+        failed_ids: list[int] = []
         fail_count = 0
 
         champion_id_list = [int(champion_id) for champion_id in get_game_data().champion_ids()]
