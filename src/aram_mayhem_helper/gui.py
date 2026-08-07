@@ -78,65 +78,70 @@ class TkinterLogHandler(logging.Handler):
             self.handleError(record)
 
 
-# ====================== 第二步：定义业务函数（绑定按钮，带日志输出） ======================
-def recognize_augment(log_area: scrolledtext.ScrolledText) -> None:
-    """识别符文和展示结果（自动先识别当前英雄）"""
-    print_log("开始执行「识别符文」操作...", log_area)
+# ====================== 第二步：业务函数（绑定按钮，带日志输出） ======================
+def recognize_augment(
+    log_area: scrolledtext.ScrolledText,
+    buttons: list[tk.Button],
+) -> None:
+    """识别符文和展示结果（后台线程执行，避免阻塞 Tkinter 主线程）"""
+    _run_in_background(
+        _recognize_worker,
+        "开始执行「识别符文」操作...",
+        log_area,
+        buttons,
+    )
 
+
+def _recognize_worker() -> None:
+    """后台执行：识别当前英雄 → OCR 读取符文 → 生成推荐。"""
+    logger = logging.getLogger(__name__)
     game_data = get_game_data()
-    suggest: Suggest | None = None
 
-    # 自动识别英雄
     try:
         champion_name = get_current_champion_name()
         if not champion_name:
-            print_log("无法获取当前英雄名称，请确保游戏正在运行", log_area)
+            logger.error("无法获取当前英雄名称，请确保游戏正在运行")
             return
         champion_id = game_data.champion_id_by_name(champion_name)
         if not champion_id:
-            print_log(f"无法找到英雄 '{champion_name}' 对应的ID", log_area)
+            logger.error(f"无法找到英雄 '{champion_name}' 对应的ID")
             return
-        entries = game_data.augment_entries(champion_id)
-        if entries is None:
-            print_log(
-                f"英雄ID {champion_id} ({champion_name}) 的符文数据不存在",
-                log_area,
-            )
+        if game_data.augment_entries(champion_id) is None:
+            logger.error(f"英雄ID {champion_id} ({champion_name}) 的符文数据不存在")
             return
         suggest = Suggest(champion_id, game_data, thresholds=get_config().suggest)
-        print_log(f"当前英雄：{champion_name}", log_area)
+        logger.info(f"当前英雄：{champion_name}")
     except Exception as e:
-        print_log(f"识别英雄出错：{str(e)}", log_area)
+        logger.error(f"识别英雄出错：{str(e)}")
         return
 
-    # 识别符文
     augments = None
     try:
         augments = ocr_tool.get_augments()
-        assert suggest is not None
         augments_info = suggest.suggest(augments)
         for augment_info in augments_info:
-            print_log(str(augment_info), log_area)
+            logger.info(str(augment_info))
     except Exception as e:
-        print_log(f"「识别符文」操作出错：{str(e)}", log_area)
+        logger.error(f"「识别符文」操作出错：{str(e)}")
         if augments is not None:
-            print_log(str(augments), log_area)
+            logger.info(str(augments))
 
 
-# ====================== 第三步：异步爬取任务（后台线程 + 日志桥接） ======================
-_crawl_in_progress = False
+# ====================== 第三步：后台任务（后台线程 + 日志桥接） ======================
+_task_in_progress = False
 
 
 def _poll_log_queue(
     log_queue: queue.Queue[str | None],
     log_area: scrolledtext.ScrolledText,
-    crawl_buttons: list[tk.Button],
+    buttons: list[tk.Button],
+    on_done: Callable[[], None] | None,
 ) -> None:
     """Drain *log_queue* and display messages in *log_area* on the main thread.
 
-    Called periodically via ``root.after()`` while a crawl is running.
-    When a ``None`` sentinel is received the crawl is complete: buttons
-    are re-enabled, data singletons are reloaded, and polling stops.
+    Called periodically via ``root.after()`` while a background task is running.
+    When a ``None`` sentinel is received the task is complete: buttons
+    are re-enabled, *on_done* is invoked, and polling stops.
     """
     try:
         while True:
@@ -146,71 +151,70 @@ def _poll_log_queue(
                 break
 
             if msg is None:
-                _finish_crawl(log_area, crawl_buttons)
+                _finish_task(log_area, buttons, on_done)
                 return
 
             print_log(msg, log_area)
     except Exception:
-        _finish_crawl(log_area, crawl_buttons)
+        _finish_task(log_area, buttons, on_done)
         print_log("日志轮询过程中发生错误，已恢复按钮状态", log_area)
         logging.getLogger(__name__).exception("日志轮询异常")
         return
 
-    log_area.after(100, _poll_log_queue, log_queue, log_area, crawl_buttons)
+    log_area.after(100, _poll_log_queue, log_queue, log_area, buttons, on_done)
 
 
-def _finish_crawl(
+def _finish_task(
     log_area: scrolledtext.ScrolledText,
-    crawl_buttons: list[tk.Button],
+    buttons: list[tk.Button],
+    on_done: Callable[[], None] | None,
 ) -> None:
-    """Re-enable crawl buttons, reload data singletons, and reset crawl state."""
-    global _crawl_in_progress
-    _crawl_in_progress = False
+    """Re-enable buttons, run *on_done* (e.g. reload data), and reset task state."""
+    global _task_in_progress
+    _task_in_progress = False
 
-    for btn in crawl_buttons:
+    for btn in buttons:
         btn.config(state=tk.NORMAL)
-    print_log("数据抓取完成，正在重新加载数据...", log_area)
-    try:
-        get_game_data().reload()
-        print_log("数据已重新加载，新数据已生效", log_area)
-    except Exception as e:
-        print_log(f"数据重新加载失败：{e}", log_area)
+    if on_done is not None:
+        on_done()
 
 
-def _start_crawl(
-    crawl_target: Callable[[], None],
+def _run_in_background(
+    target: Callable[[], None],
     description: str,
     log_area: scrolledtext.ScrolledText,
-    crawl_buttons: list[tk.Button],
+    buttons: list[tk.Button],
+    on_done: Callable[[], None] | None = None,
 ) -> None:
-    """Start *crawl_target* in a daemon thread with log bridging to the GUI.
+    """Start *target* in a daemon thread with log bridging to the GUI.
 
     Installs :class:`TkinterLogHandler` on the ``aram_mayhem_helper`` logger,
-    disables *crawl_buttons*, starts polling the log queue, and spawns the worker.
+    disables *buttons*, starts polling the log queue, and spawns the worker.
+    A single ``_task_in_progress`` guard prevents concurrent tasks.
     """
-    global _crawl_in_progress
-    if _crawl_in_progress:
-        print_log("已有抓取任务正在执行中，请等待完成后再试", log_area)
+    global _task_in_progress
+    if _task_in_progress:
+        print_log("已有任务正在执行中，请等待完成后再试", log_area)
         return
-    _crawl_in_progress = True
+    _task_in_progress = True
     log_queue: queue.Queue[str | None] = queue.Queue()
     handler = TkinterLogHandler(log_queue)
 
     app_logger = logging.getLogger("aram_mayhem_helper")
     app_logger.addHandler(handler)
 
-    for btn in crawl_buttons:
+    for btn in buttons:
         btn.config(state=tk.DISABLED)
 
     print_log(description, log_area)
-    log_area.after(100, _poll_log_queue, log_queue, log_area, crawl_buttons)
+    log_area.after(100, _poll_log_queue, log_queue, log_area, buttons, on_done)
 
     def worker() -> None:
         try:
-            crawl_target()
+            target()
         except Exception as e:
-            app_logger.error("抓取过程中发生未捕获的异常", exc_info=True)
-            log_queue.put(f"抓取过程中发生错误：{e}")
+            app_logger.error("任务执行过程中发生未捕获的异常", exc_info=True)
+            log_queue.put(f"任务执行过程中发生错误：{e}")
         finally:
             log_queue.put(None)
             app_logger.removeHandler(handler)
@@ -233,7 +237,27 @@ def fetch_champion_data(
         else:
             logging.getLogger(__name__).warning("英雄数据抓取完成：失败")
 
-    _start_crawl(_crawl, "开始获取英雄数据...", log_area, crawl_buttons)
+    _run_in_background(
+        _crawl,
+        "开始获取英雄数据...",
+        log_area,
+        crawl_buttons,
+        on_done=_reload_data_after_crawl(log_area),
+    )
+
+
+def _reload_data_after_crawl(log_area: scrolledtext.ScrolledText) -> Callable[[], None]:
+    """爬取完成后在主线程刷新数据缓存。"""
+
+    def _reload() -> None:
+        print_log("数据抓取完成，正在重新加载数据...", log_area)
+        try:
+            get_game_data().reload()
+            print_log("数据已重新加载，新数据已生效", log_area)
+        except Exception as e:
+            print_log(f"数据重新加载失败：{e}", log_area)
+
+    return _reload
 
 
 def fetch_augment_data(
@@ -255,11 +279,12 @@ def fetch_augment_data(
         else:
             logging.getLogger(__name__).info(msg)
 
-    _start_crawl(
+    _run_in_background(
         _crawl,
         f"开始获取符文数据（页范围：{start_page}-{end_page}）...",
         log_area,
         crawl_buttons,
+        on_done=_reload_data_after_crawl(log_area),
     )
 
 
@@ -321,7 +346,7 @@ def create_gui() -> None:
     btn2 = tk.Button(
         action_group,
         text="识别符文",
-        command=lambda: recognize_augment(log_area),
+        command=lambda: recognize_augment(log_area, all_buttons),
         font=btn_font,
     )
     btn2.pack(fill=tk.X, padx=pad_sm, pady=pad_xs)
@@ -358,10 +383,10 @@ def create_gui() -> None:
     end_entry.insert(0, "999")
     end_entry.pack(side=tk.LEFT)
 
-    crawl_buttons = [btn3, btn4]
+    all_buttons = [btn2, btn3, btn4]
 
     def _on_fetch_champion() -> None:
-        fetch_champion_data(log_area, crawl_buttons)
+        fetch_champion_data(log_area, all_buttons)
 
     def _on_fetch_augment() -> None:
         try:
@@ -370,7 +395,7 @@ def create_gui() -> None:
         except ValueError:
             print_log("页数格式错误，使用默认值（1-999）", log_area)
             start, end = 1, 999
-        fetch_augment_data(log_area, crawl_buttons, start, end)
+        fetch_augment_data(log_area, all_buttons, start, end)
 
     btn3.config(command=_on_fetch_champion)
     btn4.config(command=_on_fetch_augment)
