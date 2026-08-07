@@ -13,7 +13,7 @@ from aram_mayhem_helper.crawlers.ddragon.champion_crawler import ChampionCrawler
 from aram_mayhem_helper.crawlers.opgg.aram_augment_crawler import AramAugmentCrawler
 from aram_mayhem_helper.league_client_api.live_data import get_current_champion_name
 from aram_mayhem_helper.ocr.ocr_tool import ocr_tool
-from aram_mayhem_helper.utils.data import champion_augment_data_dict, data, reload_data
+from aram_mayhem_helper.utils.data import data, get_champion_augment_data, reload_data
 from aram_mayhem_helper.utils.log_config import setup_logging
 
 current_champion_id = None
@@ -98,13 +98,13 @@ def recognize_augment(log_area: scrolledtext.ScrolledText) -> None:
         if not current_champion_id:
             print_log(f"无法找到英雄 '{champion_name}' 对应的ID", log_area)
             return
-        if current_champion_id not in champion_augment_data_dict:
+        champion_augment_data = get_champion_augment_data(current_champion_id)
+        if not champion_augment_data:
             print_log(
                 f"英雄ID {current_champion_id} ({champion_name}) 的符文数据不存在",
                 log_area,
             )
             return
-        champion_augment_data = champion_augment_data_dict[current_champion_id]
         suggest = Suggest(champion_augment_data)
         print_log(f"当前英雄：{champion_name}", log_area)
     except Exception as e:

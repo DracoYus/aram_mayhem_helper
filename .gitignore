@@ -2,6 +2,7 @@
 __pycache__/
 data/ddragon/
 data/opgg/
+data/aramkit/
 !data/augment_trans.json
 deploy/data/
 logs/
