@@ -1,28 +1,22 @@
-"""web 模块构建器行为锁定测试（记录形状/打分/列表）。"""
+"""web 服务层与应用工厂测试（记录形状/打分/列表/路由）。"""
 
 import json
 
 import pytest
 
-import aram_mayhem_helper.web as web_mod
-from aram_mayhem_helper.utils.data import GameData
+from aram_mayhem_helper.web.app import create_app
+from aram_mayhem_helper.web.service import augment_description, build_champion_augments, build_champion_list
 
 
 @pytest.fixture
-def patch_web_globals(monkeypatch, game_data: GameData):
-    """用 fixture GameData 替换 web 模块的数据依赖。"""
+def patch_i18n_files(monkeypatch, fixture_data_dir):
+    """把 service 的 i18n/描述加载替换为 fixture 数据。"""
+    import aram_mayhem_helper.web.service as service
 
-    monkeypatch.setattr(
-        web_mod,
-        "_champion_i18n",
-        json.loads((game_data._config.i18n_file).read_text(encoding="utf-8")),
-    )
-    monkeypatch.setattr(
-        web_mod,
-        "_augment_descriptions",
-        json.loads((game_data._config.augment_desc_file).read_text(encoding="utf-8")),
-    )
-    monkeypatch.setattr(web_mod, "get_game_data", lambda: game_data)
+    i18n = json.loads((fixture_data_dir / "champions-names-i18n.json").read_text(encoding="utf-8"))
+    desc = json.loads((fixture_data_dir / "aram-mayhem-augments.zh_cn.json").read_text(encoding="utf-8"))
+    monkeypatch.setattr(service, "_load_champion_i18n", lambda: i18n)
+    monkeypatch.setattr(service, "_load_augment_descriptions", lambda: desc)
 
 
 RECORD_KEYS = {
@@ -47,8 +41,8 @@ RECORD_KEYS = {
 
 
 class TestBuildChampionAugments:
-    def test_record_key_set_and_values_opgg(self, patch_web_globals) -> None:
-        rows = web_mod._build_champion_augments("103", "opgg")
+    def test_record_key_set_and_values_opgg(self, game_data, patch_i18n_files) -> None:
+        rows = build_champion_augments(game_data, "103", "opgg")
         assert len(rows) == 6
         assert all(set(r.keys()) == RECORD_KEYS for r in rows)
         first = rows[0]  # 文件顺序保持（不按分数排序）
@@ -62,8 +56,8 @@ class TestBuildChampionAugments:
         assert first["performance_display"] == pytest.approx(80.0)
         assert first["popular_display"] == pytest.approx(10.0)
 
-    def test_aramkit_display_scale_x100(self, patch_web_globals) -> None:
-        rows = web_mod._build_champion_augments("103", "aramkit")
+    def test_aramkit_display_scale_x100(self, game_data, patch_i18n_files) -> None:
+        rows = build_champion_augments(game_data, "103", "aramkit")
         assert len(rows) == 7
         by_id = {r["augment_id"]: r for r in rows}
         # 0.55 × 100 的 IEEE 浮点产物（特征锁定）
@@ -74,16 +68,16 @@ class TestBuildChampionAugments:
         assert by_id["7777"]["augment_name"] == "测试回退符文"
         assert by_id["7777"]["level"] == "1"
 
-    def test_popular_zero_entries_filtered(self, patch_web_globals) -> None:
-        assert web_mod._build_champion_augments("22", "opgg") == []
+    def test_popular_zero_entries_filtered(self, game_data, patch_i18n_files) -> None:
+        assert build_champion_augments(game_data, "22", "opgg") == []
 
-    def test_unknown_champion_returns_empty(self, patch_web_globals) -> None:
-        assert web_mod._build_champion_augments("999", "opgg") == []
+    def test_unknown_champion_returns_empty(self, game_data, patch_i18n_files) -> None:
+        assert build_champion_augments(game_data, "999", "opgg") == []
 
 
 class TestBuildChampionList:
-    def test_list_shape_and_counts(self, patch_web_globals) -> None:
-        lst = web_mod._build_champion_list("opgg")
+    def test_list_shape_and_counts(self, game_data, patch_i18n_files) -> None:
+        lst = build_champion_list(game_data, "opgg")
         assert lst == [
             {
                 "champion_id": "22",
@@ -110,17 +104,48 @@ class TestBuildChampionList:
 
 
 class TestAugmentDescription:
-    def test_strips_pseudo_html_tags(self, patch_web_globals) -> None:
-        assert web_mod._augment_description("1001") == "造成适应之力。"
+    def test_strips_pseudo_html_tags(self, game_data, patch_i18n_files) -> None:
+        assert augment_description("1001") == "造成适应之力。"
 
-    def test_missing_description_returns_empty(self, patch_web_globals) -> None:
-        assert web_mod._augment_description("9999") == ""
+    def test_missing_description_returns_empty(self, game_data, patch_i18n_files) -> None:
+        assert augment_description("9999") == ""
 
-    def test_falls_back_to_tooltip(self, patch_web_globals, game_data, fixture_data_dir) -> None:
-        (fixture_data_dir / "aram-mayhem-augments.zh_cn.json").write_text(
-            json.dumps({"1002": {"tooltip": "仅有<attention>提示</attention>。"}}), encoding="utf-8"
-        )
-        web_mod._augment_descriptions = json.loads(
-            (fixture_data_dir / "aram-mayhem-augments.zh_cn.json").read_text(encoding="utf-8")
-        )
-        assert web_mod._augment_description("1002") == "仅有提示。"
+
+class TestCreateApp:
+    def test_index_renders_with_default_source(self, game_data, patch_i18n_files) -> None:
+        client = create_app(game_data).test_client()
+        resp = client.get("/")
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "ARAM 符文数据浏览" in html
+
+    def test_api_champions_shape(self, game_data, patch_i18n_files) -> None:
+        client = create_app(game_data).test_client()
+        resp = client.get("/api/champions?source=opgg")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert len(data) == 3
+        assert data[1]["champion_id"] == "103"
+        assert data[1]["augment_count"] == 7
+
+    def test_api_champion_augments_record_keys(self, game_data, patch_i18n_files) -> None:
+        client = create_app(game_data).test_client()
+        resp = client.get("/api/champions/103/augments?source=opgg")
+        assert resp.status_code == 200
+        rows = resp.get_json()
+        assert len(rows) == 6
+        assert set(rows[0].keys()) == RECORD_KEYS
+        assert rows[0]["weighted_sum"] == pytest.approx(0.5)
+
+    def test_api_aramkit_source_switch(self, game_data, patch_i18n_files) -> None:
+        client = create_app(game_data).test_client()
+        resp = client.get("/api/champions/103/augments?source=aramkit")
+        assert resp.status_code == 200
+        rows = resp.get_json()
+        assert rows[0]["performance"] == 0.55
+
+    def test_api_unknown_champion_returns_empty_list(self, game_data, patch_i18n_files) -> None:
+        client = create_app(game_data).test_client()
+        resp = client.get("/api/champions/999/augments?source=opgg")
+        assert resp.status_code == 200
+        assert resp.get_json() == []

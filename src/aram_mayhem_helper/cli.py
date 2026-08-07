@@ -128,10 +128,10 @@ if __name__ == "__main__":
     elif args.command == "main":
         main()
     elif args.command == "web":
-        from aram_mayhem_helper.web import app
+        from aram_mayhem_helper.web import create_app
 
         logger.info(f"启动网页应用 at http://{args.host}:{args.port}")
-        app.run(host=args.host, port=args.port, debug=False)
+        create_app().run(host=args.host, port=args.port, debug=False)
     else:
         logger.error("请指定要执行的命令")
         print("使用方法:")
