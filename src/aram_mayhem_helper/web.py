@@ -121,6 +121,8 @@ def _build_champion_augments(champion_id: str, source: str | None = None) -> lis
         level = aug_info.get("level", "?")
         augment_name = aug_info.get("name", f"ID:{item_id}")
 
+        # 显示尺度统一：aramkit 原生 0~1（winRate/pickRate），×100 与 OP.GG 的 0-100 一致
+        display_scale = 100 if source == "aramkit" else 1
         record = {
             "champion_id": champion_id,
             "champion_name": champion_name,
@@ -132,6 +134,8 @@ def _build_champion_augments(champion_id: str, source: str | None = None) -> lis
             "level": level,
             "performance": perf,
             "popular": pop,
+            "performance_display": perf * display_scale,
+            "popular_display": pop * display_scale,
         }
         rows.append(record)
         by_level.setdefault(level, []).append(record)
@@ -436,7 +440,7 @@ function renderDetail() {
   if (showL2) allowedLevels.add('2');
 
   const filtered = currentAugments.filter(d =>
-    allowedLevels.has(d.level) && d.performance >= minPerf && d.popular >= minPop
+    allowedLevels.has(d.level) && d.performance_display >= minPerf && d.popular_display >= minPop
   );
   const sorted = [...filtered].sort((a, b) => {
     let va = a[sortCol], vb = b[sortCol];
@@ -447,8 +451,8 @@ function renderDetail() {
   document.querySelector('#dataTable tbody').innerHTML = sorted.map(d => {
     const wsClass = d.weighted_sum >= 0.7 ? 'ws-high' : d.weighted_sum >= 0.4 ? 'ws-mid' : 'ws-low';
     const ws = d.weighted_sum != null ? d.weighted_sum.toFixed(2) : '-';
-    const perf = d.performance != null ? d.performance.toFixed(1) : '-';
-    const pop = d.popular != null ? d.popular.toFixed(1) : '-';
+    const perf = d.performance_display != null ? d.performance_display.toFixed(1) : '-';
+    const pop = d.popular_display != null ? d.popular_display.toFixed(1) : '-';
     return `<tr>
       <td><span data-tooltip="${escHtml(d.description || '')}" class="aug-name">${escHtml(d.augment_name)}</span></td>
       <td><span class="level-badge level-${d.level}">${d.level}</span></td>
