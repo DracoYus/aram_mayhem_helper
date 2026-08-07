@@ -65,7 +65,7 @@ class AramkitCrawler(BaseCrawler):
         try:
             response = self.session.get(url, timeout=self.timeout)
             response.raise_for_status()
-            return response.text
+            return str(response.text)
         except Exception as e:
             self.logger.error(f"请求 {url} 时发生错误: {str(e)}")
             return None

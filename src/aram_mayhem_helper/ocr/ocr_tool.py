@@ -82,7 +82,7 @@ class OCRTool:
             self._screen_size = (monitor.width, monitor.height)
         return self._screen_size
 
-    def capture_screen(self, bbox: tuple[int, int, int, int]) -> np.ndarray:
+    def capture_screen(self, bbox: tuple[int, int, int, int]) -> np.ndarray[Any, Any]:
         """
         截取屏幕指定区域
         :param bbox: 屏幕区域坐标 (left, top, right, bottom)
@@ -97,7 +97,7 @@ class OCRTool:
             raise RuntimeError(f"屏幕截图失败: {str(e)}")
 
     @retry_on_exception(max_retries=2, delay=0.5, backoff_factor=1.5, exceptions=(RuntimeError,))
-    def recognize_text(self, image: np.ndarray | str) -> list[dict]:
+    def recognize_text(self, image: np.ndarray[Any, Any] | str) -> list[dict[str, Any]]:
         """
         识别图像中的文本
         :param image: 图像输入，支持 numpy 数组（截图结果）或 本地图片路径

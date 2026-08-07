@@ -3,6 +3,7 @@
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from aram_mayhem_helper.utils.text_normalization import normalize_text
 
@@ -10,7 +11,7 @@ from aram_mayhem_helper.utils.text_normalization import normalize_text
 RARITY_TO_LEVEL = {"prismatic": "2", "gold": "1", "silver": "0"}
 
 
-def convert_augment_records(augment_list: list[dict]) -> list[dict]:
+def convert_augment_records(augment_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """将 aramkit augment 记录转换为引擎标准记录。
 
     不做字段同构：performance/popular 直接取 aramkit 原生 0~1 小数值
@@ -24,7 +25,7 @@ def convert_augment_records(augment_list: list[dict]) -> list[dict]:
         引擎标准记录列表（字段含 id/performance/popular 及保留的原始字段），
         缺少 id/winRate/pickRate 的记录被跳过
     """
-    converted: list[dict] = []
+    converted: list[dict[str, Any]] = []
     for item in augment_list:
         item_id = item.get("id")
         win_rate = item.get("winRate")
@@ -44,7 +45,7 @@ def convert_augment_records(augment_list: list[dict]) -> list[dict]:
     return converted
 
 
-def version_sort_key(version: str) -> tuple:
+def version_sort_key(version: str) -> tuple[Any, ...]:
     """版本目录名排序键：按游戏版本号（major.minor）+ 日期/哈希排序取最新。"""
     parts = version.split("-")
     major_minor = parts[0].split(".")
@@ -58,8 +59,8 @@ class AramkitResources:
     def __init__(self, resources_directory: Path) -> None:
         self.logger = logging.getLogger(__name__)
         self.resources_directory = resources_directory
-        self.augment_id_name_dict: dict[str, dict] = {}
-        self.augment_name_id_dict: dict[str, dict] = {}
+        self.augment_id_name_dict: dict[str, dict[str, Any]] = {}
+        self.augment_name_id_dict: dict[str, dict[str, Any]] = {}
 
     def _load(self) -> None:
         """加载最新版本子目录下的 augments.json。"""
@@ -76,7 +77,7 @@ class AramkitResources:
         if augments_file.exists():
             try:
                 with open(augments_file, "r", encoding="utf-8") as f:
-                    raw_augments = json.load(f)
+                    raw_augments: dict[str, dict[str, Any]] = json.load(f)
             except (json.JSONDecodeError, OSError) as e:
                 self.logger.error(f"读取 aramkit augments 资源文件失败: {augments_file}, 错误: {str(e)}")
                 raw_augments = {}
@@ -84,7 +85,7 @@ class AramkitResources:
                 name = info.get("name")
                 if not name:
                     continue
-                level = RARITY_TO_LEVEL.get(info.get("rarity"), "0")
+                level = RARITY_TO_LEVEL.get(str(info.get("rarity")), "0")
                 entry = {"name": name, "level": level}
                 self.augment_id_name_dict[aug_id] = entry
                 self.augment_name_id_dict[normalize_text(name)] = {"id": aug_id, "level": level}
@@ -94,7 +95,7 @@ class AramkitResources:
         self.augment_id_name_dict = {}
         self.augment_name_id_dict = {}
 
-    def get_augment_info(self, augment_id: str) -> dict | None:
+    def get_augment_info(self, augment_id: str) -> dict[str, Any] | None:
         """根据符文 ID 获取 {"name", "level"}，未找到时返回 None。"""
         self._load()
         return self.augment_id_name_dict.get(augment_id)
@@ -105,5 +106,5 @@ class AramkitResources:
         normalized_name = normalize_text(augment_name)
         augment_info = self.augment_name_id_dict.get(normalized_name)
         if augment_info:
-            return augment_info["id"]
+            return str(augment_info["id"])
         return None

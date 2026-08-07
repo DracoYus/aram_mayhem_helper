@@ -58,7 +58,11 @@ cd aram-mayhem-helper
 使用 uv 安装项目依赖：
 
 ```bash
-uv sync
+# GUI / recommend 命令需要 OCR 依赖组（PaddleOCR ~2GB）
+uv sync --extra ocr
+
+# 仅使用网页浏览（无需 OCR，轻量部署）：
+# uv sync
 ```
 
 注册模块：
@@ -76,11 +80,16 @@ uv pip install -e .
 timeout = 30              # 请求超时时间（秒）
 delay_second = 2           # 爬取延迟（秒）
 
+[data_source]
+source = "aramkit"         # 默认数据源: "opgg" | "aramkit"
+
 [suggest]
-immediate_select_weighted_sum_threshold = 0.6      # 快选阈值
-immediate_select_precentage_threshold = 0.15         # 快选百分比阈值
-consider_select_weighted_sum_threshold = 0.45       # 考虑阈值
-consider_select_precentage_threshold = 0.3          # 考虑百分比阈值
+shrinkage_tau_factor = 0.5   # 贝叶斯收缩参数：τ = median(pop>0) × tau_factor
+sigmoid_steepness = 1.0      # Sigmoid 陡峭度
+immediate_select_score_threshold = 0.70  # 快选分数阈值
+consider_select_score_threshold = 0.50   # 考虑分数阈值
+immediate_select_precentage_threshold = 0.10  # 快选排名阈值（百分比）
+consider_select_precentage_threshold = 0.30   # 考虑排名阈值（百分比）
 ```
 
 ## 使用说明
@@ -88,8 +97,10 @@ consider_select_precentage_threshold = 0.3          # 考虑百分比阈值
 ### 命令行模式 (CLI)
 
 ```bash
-# 运行主程序（识别英雄并推荐符文）
-uv run python -m aram_mayhem_helper.cli main
+# 运行主程序（识别英雄并推荐符文）；main 为兼容别名，无子命令时默认执行本命令
+uv run python -m aram_mayhem_helper.cli recommend
+# 或使用安装后的 console script：
+uv run aram-mayhem-helper recommend
 
 # 爬取英雄数据
 uv run python -m aram_mayhem_helper.cli champion-crawler
@@ -143,20 +154,25 @@ uv run python -m aram_mayhem_helper.cli web
 
 ### 独立部署 (低性能服务器)
 
-Web 应用可脱离完整项目独立部署，仅需 `flask` + `numpy`（约 50MB），无需 PaddleOCR/PaddlePaddle（~2GB）。
+Web 应用安装主包即可（无需 `[ocr]` 依赖组，约 50MB，不含 PaddleOCR/PaddlePaddle）。
 
 ```bash
-# 1. 构建部署包（复制数据文件）
-python deploy/build.py
+# 本机部署：安装主包后直接启动
+uv run python -m aram_mayhem_helper.cli web --host 0.0.0.0 --port 5000
 
-# 2. 安装依赖并启动
-cd deploy
-pip install -r requirements.txt
-python app.py
+# Docker 部署（数据目录通过 VOLUME 挂载）
+docker build -t aram-mayhem-helper .
+docker run -p 5000:5000 -v /path/to/data:/app/data aram-mayhem-helper
+```
 
-# 3. 或使用 Docker
-docker build -t aram-web deploy/
-docker run -p 5000:5000 aram-web
+镜像内通过 `ARAM_MAYHEM_DATA_DIR` / `ARAM_MAYHEM_CONFIG_DIR` 环境变量定位数据与配置。
+
+### 测试
+
+```bash
+uv run pytest          # 144 个测试（打分/推荐/数据层/web API/爬虫等）
+uv run mypy src/       # 类型检查（strict）
+uv run ruff check src/ tests/
 ```
 
 ## 技术栈

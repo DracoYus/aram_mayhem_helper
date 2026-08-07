@@ -1,6 +1,7 @@
 """符文推荐引擎：分组打分 + 阈值建议（"快选"/"考虑"/"垃圾"）。"""
 
 import logging
+from typing import Any
 
 from aram_mayhem_helper.algorithm.pipeline import build_scored_groups
 from aram_mayhem_helper.utils.config import SuggestConfig
@@ -35,8 +36,8 @@ class Suggest:
         if entries is None:
             entries = []
 
-        self.champion_augment_data: list[dict] = []
-        self.augment_group: dict[str, dict] = {}
+        self.champion_augment_data: list[dict[str, Any]] = []
+        self.augment_group: dict[str, dict[str, Any]] = {}
         groups = build_scored_groups(
             entries,
             lookup=lambda augment_id: data.augment_info(augment_id, self.source),
@@ -50,7 +51,7 @@ class Suggest:
             self.augment_group[level] = {"augments": items, "number": len(items)}
             self.champion_augment_data.extend(items)
 
-    def get_augment_info_by_id(self, augment_id: str) -> dict | None:
+    def get_augment_info_by_id(self, augment_id: str) -> dict[str, Any] | None:
         """
         使用符文id查询对应符文信息
 
@@ -68,7 +69,7 @@ class Suggest:
                 return item
         return None
 
-    def suggest(self, augments: list[str]) -> list:
+    def suggest(self, augments: list[str]) -> list[str]:
         """
         根据输入符文信息，给出操作推荐
 
@@ -78,7 +79,7 @@ class Suggest:
         Returns:
             list: 操作推荐
         """
-        augment_info = []
+        augment_info: list[dict[str, Any]] = []
         for augment in augments:
             augment_id = self.data.augment_id(augment, self.source)
             if not augment_id:
@@ -95,12 +96,12 @@ class Suggest:
         result = self.get_suggest_info(augment_info)
         return result
 
-    def get_suggest_info(self, augments: list[dict]) -> list:
+    def get_suggest_info(self, augments: list[dict[str, Any]]) -> list[str]:
         """
         根据输入符文信息，给出操作推荐
 
         Args:
-            augments (list[dict]): 输入符文信息
+            augments (list[dict[str, Any]]): 输入符文信息
 
         Returns:
             list: 操作推荐
@@ -119,7 +120,7 @@ class Suggest:
         immediate_select_rank_threshold = augments_num * t.immediate_select_percentage_threshold
         consider_select_rank_threshold = augments_num * t.consider_select_percentage_threshold
         max_weighted_sum = max(item.get("weighted_sum", 0) for item in augments if item is not None)
-        result = []
+        result: list[str] = []
         for augment in augments:
             if augment is None:
                 continue

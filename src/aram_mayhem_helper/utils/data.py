@@ -3,6 +3,7 @@
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from aram_mayhem_helper.utils.aramkit import AramkitResources, convert_augment_records
 from aram_mayhem_helper.utils.config import AppConfig, get_config
@@ -20,8 +21,8 @@ class AugmentLookup:
         self.logger = logging.getLogger(__name__)
         self._trans_file = trans_file
         self._aramkit_resources = aramkit_resources
-        self.id_name_dict: dict[str, dict] = {}
-        self.name_id_dict: dict[str, dict] = {}
+        self.id_name_dict: dict[str, dict[str, Any]] = {}
+        self.name_id_dict: dict[str, dict[str, Any]] = {}
         self._name_norm_dict: dict[str, str] = {}  # 归一化名 → 原始名映射
 
     def _load(self) -> None:
@@ -67,7 +68,7 @@ class AugmentLookup:
         # 先精确匹配（快路径）
         augment_info = self.name_id_dict.get(augment_name)
         if augment_info:
-            return augment_info["id"]
+            return str(augment_info["id"])
 
         # 归一化匹配：消除 OCR 产出的空格、连字符差异
         input_norm = normalize_for_lookup(augment_name)
@@ -76,10 +77,10 @@ class AugmentLookup:
             return None
         augment_info = self.name_id_dict.get(original_name)
         if augment_info:
-            return augment_info["id"]
+            return str(augment_info["id"])
         return None
 
-    def get_augment_info(self, augment_id: str) -> dict | None:
+    def get_augment_info(self, augment_id: str) -> dict[str, Any] | None:
         """根据符文 ID 获取翻译表条目。"""
         self._load()
         return self.id_name_dict.get(augment_id, None)
@@ -95,14 +96,14 @@ class GameData:
     def __init__(self, config: AppConfig) -> None:
         self.logger = logging.getLogger(__name__)
         self._config = config
-        self._champion_data: dict[str, dict] | None = None
-        self._entries_cache: dict[tuple[str, str], list[dict]] = {}
+        self._champion_data: dict[str, dict[str, Any]] | None = None
+        self._entries_cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
         self._lookup: AugmentLookup | None = None
         self._resources: AramkitResources | None = None
 
     # ── 英雄元数据 ──────────────────────────────────────────────────────
 
-    def _champions(self) -> dict[str, dict]:
+    def _champions(self) -> dict[str, dict[str, Any]]:
         if self._champion_data is None:
             path = self._config.champion_dir
             if not path.exists():
@@ -130,7 +131,7 @@ class GameData:
         """根据英雄名称获取英雄 ID（不区分大小写）。"""
         for champ_id, champ_info in self._champions().items():
             if champ_info["id"].lower() == champion_name.lower():
-                return champ_info["key"]
+                return str(champ_info["key"])
         self.logger.warning(f"未找到英雄名称 '{champion_name}' 对应的 ID")
         return None
 
@@ -138,13 +139,13 @@ class GameData:
         """根据英雄 ID（key）获取英雄名称。"""
         for champ_info in self._champions().values():
             if champ_info["key"] == champion_id:
-                return champ_info["name"]
+                return str(champ_info["name"])
         self.logger.warning(f"未找到英雄 ID '{champion_id}' 对应的名称")
         return None
 
     # ── 符文条目 ────────────────────────────────────────────────────────
 
-    def augment_entries(self, champion_id: str, source: str | None = None) -> list[dict] | None:
+    def augment_entries(self, champion_id: str, source: str | None = None) -> list[dict[str, Any]] | None:
         """返回该英雄的引擎标准符文条目。
 
         Args:
@@ -199,7 +200,7 @@ class GameData:
         self._entries_cache[cache_key] = entries
         return entries
 
-    def augment_entries_all(self, source: str | None = None) -> dict[str, list[dict] | None]:
+    def augment_entries_all(self, source: str | None = None) -> dict[str, list[dict[str, Any]] | None]:
         """全部英雄的条目（懒加载，供 web 列表构建）。"""
         source = source or self.default_source()
         return {cid: self.augment_entries(cid, source) for cid in self.champion_ids()}
@@ -216,7 +217,7 @@ class GameData:
             self._resources = AramkitResources(self._config.aramkit_resources_dir)
         return self._resources
 
-    def augment_info(self, augment_id: str, source: str | None = None) -> dict | None:
+    def augment_info(self, augment_id: str, source: str | None = None) -> dict[str, Any] | None:
         """根据数据源获取符文信息：翻译表优先，aramkit 缺失时回退其资源文件。"""
         source = source or self.default_source()
         info = self._lookup_impl().get_augment_info(augment_id)

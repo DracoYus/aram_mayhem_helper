@@ -2,7 +2,7 @@
 
 import logging
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 
 from aram_mayhem_helper.utils.data import GameData, get_game_data
 from aram_mayhem_helper.web.service import build_champion_augments, build_champion_list
@@ -20,12 +20,12 @@ def create_app(game_data: GameData | None = None) -> Flask:
     app = Flask(__name__)
 
     @app.route("/")
-    def index():
+    def index() -> str:
         """Serve the main page."""
         return render_template("index.html", default_source=gd.default_source())
 
     @app.route("/api/champions")
-    def api_champions():
+    def api_champions() -> Response | tuple[Response, int]:
         """Return a summary list of all champions with cached augment data."""
         source = request.args.get("source", gd.default_source())
         try:
@@ -35,7 +35,7 @@ def create_app(game_data: GameData | None = None) -> Flask:
             return jsonify({"error": str(e)}), 500
 
     @app.route("/api/champions/<champion_id>/augments")
-    def api_champion_augments(champion_id: str):
+    def api_champion_augments(champion_id: str) -> Response | tuple[Response, int]:
         """Return normalized augment data for a specific champion."""
         source = request.args.get("source", gd.default_source())
         try:

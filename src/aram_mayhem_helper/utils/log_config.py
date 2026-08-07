@@ -9,7 +9,7 @@ def setup_logging(
     console_level: int = logging.INFO,
     file_level: int = logging.DEBUG,
     log_file: str = "app.log",
-):
+) -> None:
     """
     配置项目全局日志（只需在主入口调用一次）
     :param level: 根 logger 的最低级别

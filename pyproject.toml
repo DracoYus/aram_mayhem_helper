@@ -52,3 +52,19 @@ ignore = []
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--cov=aram_mayhem_helper", "--cov-report=term-missing"]
+
+[tool.coverage.run]
+source = ["aram_mayhem_helper"]
+omit = ["*/gui.py", "*/ocr/ocr_tool.py"]
+
+[tool.coverage.report]
+fail_under = 80

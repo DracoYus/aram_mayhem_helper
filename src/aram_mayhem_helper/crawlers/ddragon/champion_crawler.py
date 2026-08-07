@@ -32,7 +32,7 @@ class ChampionCrawler(BaseCrawler):
         """获取 Data Dragon 最新版本号（versions API 首元素）。"""
         response = requests.get(DDragon_VERSIONS_URL)
         versions = response.json()
-        return versions[0]
+        return str(versions[0])
 
     def crawl(self) -> bool:
         """获取最新版本的英雄数据并保存到本地。

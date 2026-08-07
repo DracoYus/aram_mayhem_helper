@@ -1,10 +1,12 @@
 """归一化与打分函数（自 utils/norm.py 迁移的活跃部分）。"""
 
+from typing import Any
+
 import numpy as np
 
 
 def add_unit_scale_attr(
-    data_list: list,
+    data_list: list[dict[str, Any]],
     perf_attr: str = "performance",
     pop_attr: str = "popular",
     perf_unit_attr: str = "performance_unit",
@@ -48,7 +50,7 @@ def add_unit_scale_attr(
 
 
 def add_bayesian_sigmoid_score_attr(
-    data_list: list,
+    data_list: list[dict[str, Any]],
     perf_attr: str = "performance",
     pop_attr: str = "popular",
     new_attr: str = "weighted_sum",
@@ -66,7 +68,7 @@ def add_bayesian_sigmoid_score_attr(
 
     Parameters
     ----------
-    data_list : list[dict]
+    data_list : list[dict[str, Any]]
         Mutated in-place — each dict receives ``new_attr``.
     perf_attr : str
         Key for the performance column (default ``"performance"``).

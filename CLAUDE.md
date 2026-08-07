@@ -5,12 +5,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Common Commands
 
 ```bash
-# Install dependencies and register the package
-uv sync
+# Install dependencies and register the package (OCR extra for GUI/recommend)
+uv sync --extra ocr
 uv pip install -e .
 
 # CLI — get augment recommendations for current game
-uv run python -m aram_mayhem_helper.cli main
+uv run python -m aram_mayhem_helper.cli recommend
 
 # CLI — crawl champion data from Data Dragon
 uv run python -m aram_mayhem_helper.cli champion-crawler
@@ -27,74 +27,80 @@ uv run python -m aram_mayhem_helper.gui
 # Web — browse cached champion augment data
 uv run python -m aram_mayhem_helper.cli web
 
-# Deploy — build standalone web app package (no PaddleOCR needed)
-python deploy/build.py
+# Deploy — Docker image installs the main package (no OCR deps)
+docker build -t aram-mayhem-helper .
+docker run -p 5000:5000 -v /path/to/data:/app/data aram-mayhem-helper
 
-# Lint and format
-uv run ruff check src/
-uv run ruff format src/
+# Lint, format, type-check, test
+uv run ruff check src/ tests/
+uv run ruff format src/ tests/
+uv run mypy src/
+uv run pytest
 ```
 
 ## Architecture
 
 ```text
 src/aram_mayhem_helper/
-├── cli.py              # CLI entry point with argparse subcommands
-├── gui.py              # Tkinter GUI (two buttons + log area)
-├── web.py              # Flask web app — champion list + per-champion augment table
+├── cli.py              # CLI entry: cli_main() dispatcher + recommend()/crawler/web subcommands
+├── gui.py              # Tkinter GUI (background tasks via queue-bridged threads)
 ├── algorithm/
-│   └── suggest.py      # Core: augment recommendation engine
+│   ├── scoring.py      # add_unit_scale_attr + add_bayesian_sigmoid_score_attr (min-max → Bayesian-sigmoid)
+│   ├── pipeline.py     # build_scored_groups(): filter → group by level → score (shared by Suggest & web)
+│   └── suggest.py      # Suggest engine: instance-injected thresholds + GameData
 ├── crawlers/
-│   ├── ddragon/
-│   │   └── champion_crawler.py  # Champion JSON from Data Dragon API
-│   ├── opgg/
-│   │   └── aram_augment_crawler.py  # Augment stats from OP.GG API
-│   └── aramkit/
-│       └── aramkit_crawler.py  # Augment stats from aramkit.com (data.aramkit.com API)
+│   ├── base.py         # BaseCrawler: session / fetch_json / save_to_file / crawl_and_save
+│   ├── ddragon/champion_crawler.py
+│   ├── opgg/aram_augment_crawler.py
+│   └── aramkit/aramkit_crawler.py  # version discovery from homepage HTML
 ├── league_client_api/
 │   └── live_data.py    # Reads current game state from League Client (localhost:2999)
 ├── ocr/
-│   └── ocr_tool.py     # PaddleOCR-based screen capture + text recognition
+│   └── ocr_tool.py     # PaddleOCR lazy-loaded; get_ocr_tool() singleton; region_to_pixel()
+├── web/
+│   ├── app.py          # create_app(game_data=None) Flask factory + 3 routes
+│   ├── service.py      # i18n names, descriptions, build_champion_list/augments
+│   └── templates/index.html
 └── utils/
-    ├── config.py       # TOML config loader (Config singleton with nested key access)
-    ├── data.py         # Game data: Data (champion list), ChampionAugmentData (source-aware: opgg/aramkit), AugmentTool (name↔ID)
-    ├── aramkit.py      # aramkit adapter: convert_augment_records (native 0~1 values) + AramkitResources fallback lookup
-    ├── norm.py         # IQR-filtered min-max/z-score normalization + weighted sum
-    ├── retry.py        # Exponential backoff retry decorator
+    ├── config.py       # Frozen dataclasses (AppConfig) + load_config() + lazy get_config()
+    ├── data.py         # GameData repository + AugmentLookup (lazy singletons via get_game_data())
+    ├── aramkit.py      # convert_augment_records + version_sort_key + AramkitResources(dir)
+    ├── retry.py        # Typed exponential-backoff retry decorator
     ├── log_config.py   # Root logger setup (console + file)
-    └── text_normalization.py  # OCR text cleanup: normalizes dash variants (— → -) etc.
+    └── text_normalization.py  # OCR text cleanup: dash variants (— → -) etc.
+tests/                  # pytest: 144 tests + fixtures/ (synthetic data mirroring disk layout)
 ```
+
+Layering: entry points (cli/gui/web) → algorithm → utils/crawlers. Dependencies point downward only.
 
 ## Key Data Flow
 
-**CLI `main` flow:**
+**CLI `recommend` flow:**
 
-1. `live_data.py` queries League Client API (`https://127.0.0.1:2999/liveclientdata/allgamedata`) to get the player's current champion name
-2. `data.Data` maps champion name → champion ID (from Data Dragon JSON in `data/ddragon/champions/`)
-3. `ChampionAugmentData` loads that champion's augment stats from `data/opgg/aram_augments/{championId}.json`
-4. `Suggest` normalizes performance/popularity scores (IQR min-max), computes weighted sum (0.7 perf + 0.3 popular), ranks augments within each level
+1. `live_data.get_current_champion_name()` queries League Client API (`https://127.0.0.1:2999/liveclientdata/allgamedata`) for the player's current champion
+2. `GameData.champion_id_by_name()` maps champion name → ID (from Data Dragon JSON in `data/ddragon/champions/`)
+3. `GameData.augment_entries()` loads that champion's augment stats (opgg reads `data` field; aramkit reads `augments.all` + `convert_augment_records`, both per-(champion, source) cached)
+4. `Suggest` runs `build_scored_groups()`: filters placeholders → groups by level → per group `add_unit_scale_attr` (min-max to [0,1]) + `add_bayesian_sigmoid_score_attr` (τ = median(pop>0) × tau_factor, weighted mean/std, sigmoid squash; `weighted_sum` + `performance_norm`/`popular_norm` percentiles)
 5. `OCRTool` screenshots 3 predefined screen regions (percentage-based) and runs PaddleOCR to read augment names
 6. `Suggest.suggest()` matches OCR results → augment IDs → returns recommendation strings ("快选"/"考虑"/"垃圾")
 
-**Data crawling:**
-
-- `champion-crawler`: Fetches `https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/champion.json` → saves to `data/ddragon/champions/{version}.json`
-- `aram-augment-crawler`: Iterates champion IDs, fetches `https://lol-api-champion.op.gg/api/contents/stats/champions/{id}/aram-augments` → saves to `data/opgg/aram_augments/{id}.json`
-
 **Web flow:**
 
-- `GET /` serves a single-page app (inline HTML rendered via `render_template_string`)
-- Home page shows a champion card grid from `GET /api/champions` (returns champion ID, name, augment count)
-- Clicking a champion calls `GET /api/champions/<id>/augments` → `_build_champion_augments()` applies the same IQR min-max normalization + weighted-sum logic as `Suggest`, then returns per-champion records with `augment_name` resolved from `augment_tool`
-- Detail view supports sorting by any column, level checkboxes, and min-performance/min-popularity numeric filters
+- `GET /` serves the SPA (`web/templates/index.html`)
+- `GET /api/champions` → `service.build_champion_list()` (per-champion augment counts)
+- `GET /api/champions/<id>/augments` → `service.build_champion_augments()` — runs the **same** `build_scored_groups` pipeline as Suggest (`assign_rank=False`, file order preserved) then builds display records (aramkit ×100 scale, i18n names, descriptions)
 
 ## Important Details
 
-- **League Client must be running** with "allow third-party apps" enabled for CLI `main` and GUI to work. The API uses self-signed certs — SSL verification is disabled via `urllib3.disable_warnings()`.
-- **OCR screen regions** are hardcoded in `OCRTool.REGIONS` as percentage tuples `(left%, top%, right%, bottom%)`. If the game UI changes, these coordinates need updating.
-- **`Suggest.__init__` filters out** augment entries where `performance == 170` and `popular == 0` — these are treated as invalid/placeholder data points.
-- **`config.toml`** contains thresholds that control recommendation behavior: `immediate_select_weighted_sum_threshold` (0.6), `immediate_select_precentage_threshold` (0.15), etc.
-- **No tests exist** in this project. The `ruff` config in `pyproject.toml` enables only `E`, `F`, `I` rules.
-- **`utils/text_normalization.py`** normalizes OCR text before augment name lookup. PaddleOCR may misread `-` (U+002D) as `—` (em-dash), `–` (en-dash), or `－` (fullwidth). `AugmentTool.get_augment_id()` applies `normalize_text()` before the exact dict match.
-- **`data/augment_trans.json`** is the augment name↔ID↔level lookup table, manually maintained. The module-level singletons `data`, `champion_augment_data_dict`, and `augment_tool` in `data.py` are initialized at import time. aramkit shares the same Riot augment IDs, so its resources file (`data/aramkit/resources/{version}/augments.json`) is only a fallback for missing entries.
-- **Two data sources coexist independently**: OP.GG (`data/opgg/aram_augments/`) and aramkit (`data/aramkit/aram_augments/{dataset}/`). Default source comes from `[data_source] source` in config.toml; the web UI switches via the top-bar dropdown / `?source=` param. Both sources' performance/popular are min-max scaled to [0,1] per level group (`add_unit_scale_attr` in `utils/norm.py`) before Bayesian-sigmoid scoring, so their scores are directly comparable. aramkit `winRate`/`pickRate` are already 0~1 decimals; OP.GG values are 0-100 — no field-level isomorphism is performed.
+- **Config is frozen dataclasses**: `load_config()` supports env `ARAM_MAYHEM_CONFIG_DIR`/`ARAM_MAYHEM_DATA_DIR` (required for Docker, where `parents[3]` resolves to site-packages). The old `Config`/`config` compat shim still exists in `utils/config.py` — migrate remaining callers off it when touched. TOML keys accept both `precentage` (legacy) and `percentage` spellings.
+- **No import-time side effects**: `get_game_data()`/`get_config()`/`get_ocr_tool()` are lazy singletons; paddle/PIL/screeninfo import inside methods. Importing `aram_mayhem_helper.cli` must not load PaddleOCR.
+- **GameData.reload()** clears all caches (champion metadata, entries, translation table, aramkit resources) — GUI calls it after crawls.
+- **pipeline tolerances (intentional unification)**: single-item level groups (zero variance → `ValueError`/`ZeroDivisionError`) are logged and skipped, not raised; lookup-miss entries are dropped entirely (legacy Suggest kept them in `champion_augment_data`).
+- **OCR screen regions** are module constants `REGIONS` in `ocr/ocr_tool.py` as percentage tuples; `region_to_pixel()` converts. Update if the game UI changes.
+- **`Suggest.__init__`** takes `(champion_id, data: GameData, *, source, thresholds: SuggestConfig)` — thresholds are instance data, never read from config at import.
+- **`config.toml`** contains thresholds controlling recommendations (see README); dead `[team_analysis]` section was removed (feature never merged).
+- **Dependencies**: base = flask/numpy(<2.0)/requests; `[ocr]` extra = paddleocr/paddlepaddle/Pillow/screeninfo/setuptools. Web deploy installs the base package only.
+- **`data/augment_trans.json`** is the augment name↔ID↔level lookup table, manually maintained. aramkit shares Riot augment IDs; `data/aramkit/resources/{version}/augments.json` is a fallback for missing entries (`AramkitResources`, lazily loaded).
+- **Two data sources coexist independently**: OP.GG (`data/opgg/aram_augments/`) and aramkit (`data/aramkit/aram_augments/{dataset}/`). Default source from `[data_source] source`; the web UI switches via the top-bar dropdown / `?source=` param. Both sources are min-max scaled to [0,1] per level group before Bayesian-sigmoid scoring, so scores are directly comparable. aramkit `winRate`/`pickRate` are 0~1 decimals; OP.GG values are 0-100 — no field-level isomorphism.
+- **Tests**: pytest (144 tests) with synthetic fixtures in `tests/fixtures/`; coverage gate ≥80% excluding `gui.py`/`ocr_tool.py`; mypy strict + ruff (E/F/I, line-length 120).
+- **Console scripts**: `aram-mayhem-helper` (primary) and `main` (deprecated alias) both point to `cli:cli_main`.

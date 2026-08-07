@@ -1,17 +1,20 @@
 import logging
 import time
 from functools import wraps
-from typing import Callable, Type
+from typing import Callable, ParamSpec, TypeVar
 
 logger = logging.getLogger(__name__)
+
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
 
 
 def retry_on_exception(
     max_retries: int = 3,
     delay: float = 1.0,
     backoff_factor: float = 2.0,
-    exceptions: tuple[Type[Exception], ...] = (Exception,),
-):
+    exceptions: tuple[type[Exception], ...] = (Exception,),
+) -> Callable[[Callable[_P, _T]], Callable[_P, _T]]:
     """
     重试装饰器，当函数抛出指定异常时自动重试
 
@@ -22,11 +25,11 @@ def retry_on_exception(
         exceptions: 需要重试的异常类型元组
     """
 
-    def decorator(func: Callable):
+    def decorator(func: Callable[_P, _T]) -> Callable[_P, _T]:
         @wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _T:
             current_delay = delay
-            last_exception = None
+            last_exception: Exception | None = None
 
             for attempt in range(max_retries + 1):
                 try:
@@ -43,6 +46,7 @@ def retry_on_exception(
                     else:
                         logger.error(f"{func.__name__} 执行失败，已达到最大重试次数（{max_retries}次），错误: {str(e)}")
 
+            assert last_exception is not None
             raise last_exception
 
         return wrapper

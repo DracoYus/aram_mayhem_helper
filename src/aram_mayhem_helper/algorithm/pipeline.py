@@ -2,20 +2,21 @@
 
 import logging
 from collections.abc import Callable
+from typing import Any
 
 from aram_mayhem_helper.algorithm.scoring import add_bayesian_sigmoid_score_attr, add_unit_scale_attr
 
 
 def build_scored_groups(
-    entries: list[dict],
+    entries: list[dict[str, Any]],
     *,
-    lookup: Callable[[str], dict | None],
+    lookup: Callable[[str], dict[str, Any] | None],
     tau_factor: float,
     sigmoid_steepness: float,
     assign_rank: bool = True,
     champion_id: str | None = None,
     logger: logging.Logger | None = None,
-) -> list[tuple[str, list[dict]]]:
+) -> list[tuple[str, list[dict[str, Any]]]]:
     """过滤/分组/打分流水线。
 
     过滤规则（统一采用 web 的容错行为，与旧 Suggest 的差异见下）：
@@ -43,7 +44,7 @@ def build_scored_groups(
         [(level, items)]，按 level 首次出现顺序
     """
     log = logger or logging.getLogger(__name__)
-    filtered: list[dict] = []
+    filtered: list[dict[str, Any]] = []
     for item in entries:
         perf = item.get("performance")
         pop = item.get("popular")
@@ -63,7 +64,7 @@ def build_scored_groups(
         item["name"] = augment_info.get("name") or f"ID:{item_id}"
         filtered.append(item)
 
-    by_level: dict[str, list[dict]] = {}
+    by_level: dict[str, list[dict[str, Any]]] = {}
     for item in filtered:
         by_level.setdefault(item["level"], []).append(item)
 
