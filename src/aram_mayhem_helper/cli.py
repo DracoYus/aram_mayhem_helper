@@ -7,7 +7,8 @@ from aram_mayhem_helper.crawlers.ddragon.champion_crawler import ChampionCrawler
 from aram_mayhem_helper.crawlers.opgg.aram_augment_crawler import AramAugmentCrawler
 from aram_mayhem_helper.league_client_api.live_data import get_current_champion_name
 from aram_mayhem_helper.ocr.ocr_tool import ocr_tool
-from aram_mayhem_helper.utils.data import data, get_champion_augment_data
+from aram_mayhem_helper.utils.config import get_config
+from aram_mayhem_helper.utils.data import get_game_data
 from aram_mayhem_helper.utils.log_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -58,17 +59,17 @@ def main() -> None:
         logger.error("无法获取当前英雄名称")
         return
 
-    champion_id = data.get_champion_id_by_name(champion_name)
+    game_data = get_game_data()
+    champion_id = game_data.champion_id_by_name(champion_name)
     if not champion_id:
         logger.error(f"无法找到英雄名称 '{champion_name}' 对应的ID")
         return
 
-    champion_augment_data = get_champion_augment_data(champion_id)
-    if not champion_augment_data:
+    if game_data.augment_entries(champion_id) is None:
         logger.error(f"英雄ID {champion_id} 的符文数据不存在")
         return
 
-    suggest = Suggest(champion_augment_data)
+    suggest = Suggest(champion_id, game_data, thresholds=get_config().suggest)
     arguments = ocr_tool.get_augments()
     results = suggest.suggest(arguments)
     if results:

@@ -5,15 +5,9 @@ import logging
 
 from flask import Flask, jsonify, render_template_string, request
 
-from aram_mayhem_helper.utils.config import config
-from aram_mayhem_helper.utils.data import (
-    data,
-    get_augment_info_for_source,
-    get_champion_augment_data,
-    get_champion_augment_data_dict,
-    get_default_source,
-)
-from aram_mayhem_helper.utils.norm import add_bayesian_sigmoid_score_attr, add_unit_scale_attr
+from aram_mayhem_helper.algorithm.scoring import add_bayesian_sigmoid_score_attr, add_unit_scale_attr
+from aram_mayhem_helper.utils.config import get_config
+from aram_mayhem_helper.utils.data import get_game_data
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def _load_champion_i18n() -> dict[str, dict]:
-    path = config.data_path / "champions-names-i18n.json"
+    path = get_config().data_dir / "champions-names-i18n.json"
     if path.exists():
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -37,7 +31,7 @@ _champion_i18n: dict[str, dict] = _load_champion_i18n()
 
 
 def _load_augment_descriptions() -> dict[str, dict]:
-    path = config.data_path / "aram-mayhem-augments.zh_cn.json"
+    path = get_config().data_dir / "aram-mayhem-augments.zh_cn.json"
     if path.exists():
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -84,19 +78,18 @@ def _build_champion_augments(champion_id: str, source: str | None = None) -> lis
         champion_id: 英雄ID
         source: 数据源（"opgg"/"aramkit"），None 时取配置默认
     """
-    source = source or get_default_source()
-    champion_name = data.get_champion_name_by_id(champion_id)
+    game_data = get_game_data()
+    source = source or game_data.default_source()
+    champion_name = game_data.champion_name(champion_id)
     if not champion_name:
         return []
 
-    champ_aug_data = get_champion_augment_data(champion_id, source)
-    if not champ_aug_data:
-        return []
-
     try:
-        entries = champ_aug_data.get_champion_augment_data()
+        entries = game_data.augment_entries(champion_id, source)
     except Exception:
         logger.warning(f"无法读取英雄 {champion_id} 的符文数据，已跳过")
+        return []
+    if entries is None:
         return []
 
     rows: list[dict] = []
@@ -114,7 +107,7 @@ def _build_champion_augments(champion_id: str, source: str | None = None) -> lis
         if item_id is None:
             continue
 
-        aug_info = get_augment_info_for_source(source, str(item_id))
+        aug_info = game_data.augment_info(str(item_id), source)
         if not aug_info:
             continue
 
@@ -149,8 +142,8 @@ def _build_champion_augments(champion_id: str, source: str | None = None) -> lis
                 perf_attr="performance_unit",
                 pop_attr="popular_unit",
                 new_attr="weighted_sum",
-                tau_factor=config.get("suggest", "shrinkage_tau_factor"),
-                sigmoid_steepness=config.get("suggest", "sigmoid_steepness"),
+                tau_factor=get_config().suggest.shrinkage_tau_factor,
+                sigmoid_steepness=get_config().suggest.sigmoid_steepness,
                 perf_display_attr="performance_norm",
                 pop_display_attr="popular_norm",
             )
@@ -166,25 +159,24 @@ def _build_champion_list(source: str | None = None) -> list[dict]:
     Args:
         source: 数据源（"opgg"/"aramkit"），None 时取配置默认
     """
-    source = source or get_default_source()
+    game_data = get_game_data()
+    source = source or game_data.default_source()
     champions: list[dict] = []
-    source_dict = get_champion_augment_data_dict(source)
-    for cid in sorted(source_dict.keys(), key=int):
-        cname = data.get_champion_name_by_id(cid)
+    for cid in game_data.champion_ids():
+        cname = game_data.champion_name(cid)
         if not cname:
             continue
-        champ_aug_data = source_dict.get(cid)
         count = 0
-        if champ_aug_data:
-            try:
-                entries = champ_aug_data.get_champion_augment_data()
+        try:
+            entries = game_data.augment_entries(cid, source)
+            if entries:
                 count = sum(
                     1
                     for e in entries
                     if e.get("performance") is not None and e.get("popular", 0) != 0 and e.get("id") is not None
                 )
-            except Exception:
-                count = 0
+        except Exception:
+            count = 0
         champions.append(
             {
                 "champion_id": cid,
@@ -533,13 +525,13 @@ app = Flask(__name__)
 @app.route("/")
 def index():
     """Serve the main page."""
-    return render_template_string(PAGE_HTML, default_source=get_default_source())
+    return render_template_string(PAGE_HTML, default_source=get_game_data().default_source())
 
 
 @app.route("/api/champions")
 def api_champions():
     """Return a summary list of all champions with cached augment data."""
-    source = request.args.get("source", get_default_source())
+    source = request.args.get("source", get_game_data().default_source())
     try:
         return jsonify(_build_champion_list(source))
     except Exception as e:
@@ -550,7 +542,7 @@ def api_champions():
 @app.route("/api/champions/<champion_id>/augments")
 def api_champion_augments(champion_id: str):
     """Return normalized augment data for a specific champion."""
-    source = request.args.get("source", get_default_source())
+    source = request.args.get("source", get_game_data().default_source())
     try:
         return jsonify(_build_champion_augments(champion_id, source))
     except Exception as e:

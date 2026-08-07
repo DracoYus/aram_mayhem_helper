@@ -5,50 +5,24 @@ import json
 import pytest
 
 import aram_mayhem_helper.web as web_mod
-from aram_mayhem_helper.utils.aramkit import AramkitResources
-from aram_mayhem_helper.utils.data import ChampionAugmentData, Data
+from aram_mayhem_helper.utils.data import GameData
 
 
 @pytest.fixture
-def patch_web_globals(monkeypatch, patch_config_data_path, fixture_trans_table):
-    """用 fixture 数据替换 web 模块的全局依赖。"""
+def patch_web_globals(monkeypatch, game_data: GameData):
+    """用 fixture GameData 替换 web 模块的数据依赖。"""
 
-    data_dir = patch_config_data_path
     monkeypatch.setattr(
         web_mod,
         "_champion_i18n",
-        json.loads((data_dir / "champions-names-i18n.json").read_text(encoding="utf-8")),
+        json.loads((game_data._config.i18n_file).read_text(encoding="utf-8")),
     )
     monkeypatch.setattr(
         web_mod,
         "_augment_descriptions",
-        json.loads((data_dir / "aram-mayhem-augments.zh_cn.json").read_text(encoding="utf-8")),
+        json.loads((game_data._config.augment_desc_file).read_text(encoding="utf-8")),
     )
-    monkeypatch.setattr(web_mod, "data", Data())
-    monkeypatch.setattr(web_mod, "get_default_source", lambda: "opgg")
-
-    resources = AramkitResources()
-
-    def fake_info(source: str, augment_id: str) -> dict | None:
-        info = fixture_trans_table.get(str(augment_id))
-        if info is None and source == "aramkit":
-            return resources.get_augment_info(str(augment_id))
-        return info
-
-    monkeypatch.setattr(web_mod, "get_augment_info_for_source", fake_info)
-    monkeypatch.setattr(
-        web_mod,
-        "get_champion_augment_data",
-        lambda cid, source=None: ChampionAugmentData(cid, source or "opgg"),
-    )
-    monkeypatch.setattr(
-        web_mod,
-        "get_champion_augment_data_dict",
-        lambda source=None: {
-            "103": ChampionAugmentData("103", source or "opgg"),
-            "22": ChampionAugmentData("22", source or "opgg"),
-        },
-    )
+    monkeypatch.setattr(web_mod, "get_game_data", lambda: game_data)
 
 
 RECORD_KEYS = {
@@ -125,6 +99,13 @@ class TestBuildChampionList:
                 "champion_alias": "Ahri",
                 "augment_count": 7,
             },
+            {
+                "champion_id": "266",
+                "champion_name": "Aatrox",
+                "champion_name_cn": "",
+                "champion_alias": "",
+                "augment_count": 0,
+            },
         ]
 
 
@@ -135,11 +116,11 @@ class TestAugmentDescription:
     def test_missing_description_returns_empty(self, patch_web_globals) -> None:
         assert web_mod._augment_description("9999") == ""
 
-    def test_falls_back_to_tooltip(self, patch_web_globals, patch_config_data_path) -> None:
-        (patch_config_data_path / "aram-mayhem-augments.zh_cn.json").write_text(
+    def test_falls_back_to_tooltip(self, patch_web_globals, game_data, fixture_data_dir) -> None:
+        (fixture_data_dir / "aram-mayhem-augments.zh_cn.json").write_text(
             json.dumps({"1002": {"tooltip": "仅有<attention>提示</attention>。"}}), encoding="utf-8"
         )
         web_mod._augment_descriptions = json.loads(
-            (patch_config_data_path / "aram-mayhem-augments.zh_cn.json").read_text(encoding="utf-8")
+            (fixture_data_dir / "aram-mayhem-augments.zh_cn.json").read_text(encoding="utf-8")
         )
         assert web_mod._augment_description("1002") == "仅有提示。"

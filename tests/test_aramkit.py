@@ -6,8 +6,8 @@ import shutil
 from aram_mayhem_helper.utils.aramkit import (
     RARITY_TO_LEVEL,
     AramkitResources,
-    _version_sort_key,
     convert_augment_records,
+    version_sort_key,
 )
 
 
@@ -66,15 +66,15 @@ class TestConvertAugmentRecords:
 class TestVersionSortKey:
     def test_orders_by_major_minor_then_rest(self) -> None:
         versions = ["16.14-20260805-a", "16.15-20260805-b", "16.15-20260806-c"]
-        assert max(versions, key=_version_sort_key) == "16.15-20260806-c"
+        assert max(versions, key=version_sort_key) == "16.15-20260806-c"
 
     def test_version_without_suffix_sorts_before_with_suffix(self) -> None:
-        assert _version_sort_key("16.15") < _version_sort_key("16.15-abc")
+        assert version_sort_key("16.15") < version_sort_key("16.15-abc")
 
 
 class TestAramkitResources:
-    def test_loads_latest_version_dir_and_looks_up(self, patch_config_data_path) -> None:
-        resources = AramkitResources()
+    def test_loads_latest_version_dir_and_looks_up(self, fixture_data_dir) -> None:
+        resources = AramkitResources(fixture_data_dir / "aramkit" / "resources")
         assert resources.get_augment_info("7777") == {"name": "测试回退符文", "level": "1"}
         assert resources.get_augment_id("测试回退符文") == "7777"
         # 特征锁定：资源回退仅做语义替换（normalize_text），不做空白容错
@@ -82,8 +82,8 @@ class TestAramkitResources:
         assert resources.get_augment_info("9999") is None
         assert resources.get_augment_id("不存在符文") is None
 
-    def test_picks_highest_semantic_version_dir(self, patch_config_data_path) -> None:
-        res_dir = patch_config_data_path / "aramkit" / "resources"
+    def test_picks_highest_semantic_version_dir(self, fixture_data_dir) -> None:
+        res_dir = fixture_data_dir / "aramkit" / "resources"
         shutil.copytree(
             res_dir / "16.0.1-abc123456789",
             res_dir / "16.0.2-def123456789",
@@ -91,11 +91,17 @@ class TestAramkitResources:
         (res_dir / "16.0.2-def123456789" / "augments.json").write_text(
             json.dumps({"8888": {"name": "新版符文", "rarity": "silver"}}), encoding="utf-8"
         )
-        resources = AramkitResources()
+        resources = AramkitResources(fixture_data_dir / "aramkit" / "resources")
         assert resources.get_augment_info("8888") == {"name": "新版符文", "level": "0"}
         assert resources.get_augment_info("7777") is None  # 旧版目录不再被选中
 
-    def test_missing_directory_loads_empty(self, patch_config_data_path) -> None:
-        shutil.rmtree(patch_config_data_path / "aramkit" / "resources")
-        resources = AramkitResources()
+    def test_reload_clears_and_repopulates(self, fixture_data_dir) -> None:
+        resources = AramkitResources(fixture_data_dir / "aramkit" / "resources")
+        assert resources.get_augment_info("7777") is not None
+        resources.reload()
+        assert resources.get_augment_info("7777") is not None  # 重新加载后仍可查
+
+    def test_missing_directory_loads_empty(self, fixture_data_dir) -> None:
+        shutil.rmtree(fixture_data_dir / "aramkit" / "resources")
+        resources = AramkitResources(fixture_data_dir / "aramkit" / "resources")
         assert resources.get_augment_info("7777") is None

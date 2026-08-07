@@ -3,9 +3,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Dict
 
-from aram_mayhem_helper.utils.config import config
 from aram_mayhem_helper.utils.text_normalization import normalize_text
 
 # aramkit rarity → 引擎 level（2=棱彩, 1=黄金, 0=白银）
@@ -46,23 +44,22 @@ def convert_augment_records(augment_list: list[dict]) -> list[dict]:
     return converted
 
 
-def _version_sort_key(version: str) -> tuple:
-    """版本目录名排序键：按游戏版本号（major.minor）+ 资源哈希排序取最新。"""
+def version_sort_key(version: str) -> tuple:
+    """版本目录名排序键：按游戏版本号（major.minor）+ 日期/哈希排序取最新。"""
     parts = version.split("-")
     major_minor = parts[0].split(".")
-    return (int(major_minor[0]), int(major_minor[1]), parts[1] if len(parts) > 1 else "")
+    rest = tuple(parts[1:]) if len(parts) > 1 else ()
+    return (int(major_minor[0]), int(major_minor[1])) + rest
 
 
 class AramkitResources:
     """懒加载 aramkit resources 文件，提供翻译表缺失条目的回退查找。"""
 
-    def __init__(self):
+    def __init__(self, resources_directory: Path) -> None:
         self.logger = logging.getLogger(__name__)
-        self.resources_directory = config.data_path / Path(
-            config.get("crawler", "aramkit", "resources", "save_directory")
-        )
-        self.augment_id_name_dict: Dict[str, dict] = {}
-        self.augment_name_id_dict: Dict[str, dict] = {}
+        self.resources_directory = resources_directory
+        self.augment_id_name_dict: dict[str, dict] = {}
+        self.augment_name_id_dict: dict[str, dict] = {}
 
     def _load(self) -> None:
         """加载最新版本子目录下的 augments.json。"""
@@ -73,7 +70,7 @@ class AramkitResources:
         version_dirs = [d for d in self.resources_directory.iterdir() if d.is_dir()]
         if not version_dirs:
             return
-        latest_dir = max(version_dirs, key=lambda d: _version_sort_key(d.name))
+        latest_dir = max(version_dirs, key=lambda d: version_sort_key(d.name))
 
         augments_file = latest_dir / "augments.json"
         if augments_file.exists():
@@ -92,6 +89,11 @@ class AramkitResources:
                 self.augment_id_name_dict[aug_id] = entry
                 self.augment_name_id_dict[normalize_text(name)] = {"id": aug_id, "level": level}
 
+    def reload(self) -> None:
+        """清空缓存，下次查询时重新读取。"""
+        self.augment_id_name_dict = {}
+        self.augment_name_id_dict = {}
+
     def get_augment_info(self, augment_id: str) -> dict | None:
         """根据符文 ID 获取 {"name", "level"}，未找到时返回 None。"""
         self._load()
@@ -105,6 +107,3 @@ class AramkitResources:
         if augment_info:
             return augment_info["id"]
         return None
-
-
-aramkit_resources = AramkitResources()

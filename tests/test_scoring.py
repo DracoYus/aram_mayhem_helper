@@ -1,8 +1,8 @@
-"""特征锁定测试：utils.norm 的缩放与贝叶斯-sigmoid 打分行为（重构前先锁定精确输出）。"""
+"""打分函数测试：algorithm.scoring 的缩放与贝叶斯-sigmoid 打分行为（自 utils.norm 迁移）。"""
 
 import pytest
 
-from aram_mayhem_helper.utils.norm import add_bayesian_sigmoid_score_attr, add_unit_scale_attr
+from aram_mayhem_helper.algorithm.scoring import add_bayesian_sigmoid_score_attr, add_unit_scale_attr
 
 
 def _sample_group() -> list[dict]:

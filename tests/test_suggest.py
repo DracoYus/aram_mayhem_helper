@@ -1,53 +1,25 @@
-"""algorithm.suggest 引擎行为锁定测试（分组/打分/推荐字符串）。"""
+"""algorithm.suggest 引擎测试（分组/打分/推荐字符串，基于 GameData 注入）。"""
 
-import pytest
-
-import aram_mayhem_helper.algorithm.suggest as suggest_mod
-from aram_mayhem_helper.utils.aramkit import AramkitResources
-from aram_mayhem_helper.utils.data import ChampionAugmentData
+from aram_mayhem_helper.algorithm.suggest import Suggest
+from aram_mayhem_helper.utils.config import get_config
 
 
-@pytest.fixture(autouse=True)
-def _use_fixture_data(patch_config_data_path):
-    """本模块所有测试使用 fixture 数据目录（当前数据类读 config.data_path）。"""
-    return patch_config_data_path
-
-
-def _patch_lookup(monkeypatch: pytest.MonkeyPatch, trans_table: dict[str, dict]) -> None:
-    """用 fixture 翻译表替换 suggest 模块的源感知查找函数。"""
-
-    resources = AramkitResources()
-
-    def fake_info(source: str, augment_id: str) -> dict | None:
-        info = trans_table.get(str(augment_id))
-        if info is None and source == "aramkit":
-            return resources.get_augment_info(str(augment_id))
-        return info
-
-    def fake_id(source: str, augment_name: str) -> str | None:
-        for aid, info in trans_table.items():
-            if info["name"] == augment_name:
-                return aid
-        if source == "aramkit":
-            return resources.get_augment_id(augment_name)
-        return None
-
-    monkeypatch.setattr(suggest_mod, "get_augment_info_for_source", fake_info)
-    monkeypatch.setattr(suggest_mod, "get_augment_id_for_source", fake_id)
-
-
-def _build_suggest(monkeypatch, trans_table, champion_id: str = "103", source: str = "opgg"):
-    _patch_lookup(monkeypatch, trans_table)
-    return suggest_mod.Suggest(ChampionAugmentData(champion_id, source=source))
+def _build_suggest(game_data, champion_id: str = "103", source: str = "opgg") -> Suggest:
+    return Suggest(
+        champion_id,
+        game_data,
+        source=source,
+        thresholds=get_config().suggest,
+    )
 
 
 class TestSuggestInit:
-    def test_groups_by_level_and_scores(self, monkeypatch, fixture_trans_table) -> None:
-        s = _build_suggest(monkeypatch, fixture_trans_table)
+    def test_groups_by_level_and_scores(self, game_data) -> None:
+        s = _build_suggest(game_data)
         assert {k: len(v["augments"]) for k, v in s.augment_group.items()} == {"2": 3, "1": 3}
 
-    def test_exact_scored_items_opgg(self, monkeypatch, fixture_trans_table) -> None:
-        s = _build_suggest(monkeypatch, fixture_trans_table)
+    def test_exact_scored_items_opgg(self, game_data) -> None:
+        s = _build_suggest(game_data)
         items = s.augment_group["2"]["augments"]
         assert [
             (i["id"], i["rank"], i["group_size"], i["weighted_sum"], i["performance_norm"], i["popular_norm"])
@@ -58,57 +30,78 @@ class TestSuggestInit:
             (1004, 3, 3, 0.3538, 0.2961, 1.0),
         ]
 
-    def test_aramkit_converted_and_fallback_lookup(self, monkeypatch, fixture_trans_table) -> None:
-        s = _build_suggest(monkeypatch, fixture_trans_table, source="aramkit")
+    def test_aramkit_converted_and_fallback_lookup(self, game_data) -> None:
+        s = _build_suggest(game_data, source="aramkit")
         assert {k: len(v["augments"]) for k, v in s.augment_group.items()} == {"2": 3, "1": 4}
         # 7777 来自 aramkit 资源回退
         fallback = [i for i in s.augment_group["1"]["augments"] if i["id"] == 7777]
         assert fallback[0]["name"] == "测试回退符文"
         assert fallback[0]["performance"] == 0.6
 
-    def test_popular_zero_entries_are_filtered(self, monkeypatch, fixture_trans_table) -> None:
-        s = _build_suggest(monkeypatch, fixture_trans_table, champion_id="22")
+    def test_popular_zero_entries_are_filtered(self, game_data) -> None:
+        s = _build_suggest(game_data, champion_id="22")
         assert s.augment_group == {}
 
-    def test_unknown_ids_are_skipped(self, monkeypatch, fixture_trans_table) -> None:
-        s = _build_suggest(monkeypatch, fixture_trans_table)
-        # 9999 不在翻译表 → 不入组
+    def test_unknown_ids_are_skipped(self, game_data) -> None:
+        s = _build_suggest(game_data)
+        # 9999 不在翻译表 → 不入组（统一后的行为：也不保留在 champion_augment_data）
         assert all(i["id"] != 9999 for g in s.augment_group.values() for i in g["augments"])
+        assert s.get_augment_info_by_id("9999") is None
+
+    def test_unknown_champion_initializes_empty(self, game_data) -> None:
+        s = _build_suggest(game_data, champion_id="999")
+        assert s.augment_group == {}
+        assert s.champion_augment_data == []
+
+    def test_single_item_group_does_not_crash(self, game_data, fixture_data_dir) -> None:
+        # 单元素 level 组方差为 0：统一后容错跳过打分（旧 Suggest 会抛 ValueError）
+        import json
+
+        entries = game_data.augment_entries("103", "opgg")
+        single = [e for e in entries if e["id"] == 1002]
+        (fixture_data_dir / "opgg" / "aram_augments" / "103.json").write_text(
+            json.dumps({"data": single}), encoding="utf-8"
+        )
+        game_data.reload()
+        s = _build_suggest(game_data)
+        assert "1" in s.augment_group  # 组保留（无分数）
+
+    def test_default_source_used_when_omitted(self, game_data) -> None:
+        s = _build_suggest(game_data, source=None)
+        assert s.source == game_data.default_source()
 
 
 class TestSuggestMethods:
-    def test_get_augment_info_by_id(self, monkeypatch, fixture_trans_table) -> None:
-        s = _build_suggest(monkeypatch, fixture_trans_table)
+    def test_get_augment_info_by_id(self, game_data) -> None:
+        s = _build_suggest(game_data)
         info = s.get_augment_info_by_id("1001")
         assert info is not None
         assert info["id"] == 1001
         assert info["name"] == "泰坦的坚决"
         assert s.get_augment_info_by_id("") is None
-        # 特征锁定：9999 有 perf/pop 值，虽 lookup miss 不入组，但仍留在过滤后数据中
-        assert s.get_augment_info_by_id("9999") == {"id": 9999, "tier": 0, "performance": 50.0, "popular": 40.0}
 
-    def test_suggest_recommendation_strings_opgg(self, monkeypatch, fixture_trans_table) -> None:
-        s = _build_suggest(monkeypatch, fixture_trans_table)
+    def test_suggest_recommendation_strings_opgg(self, game_data) -> None:
+        s = _build_suggest(game_data)
         results = s.suggest(["泰坦的坚决", "尖端发明家", "不存在符文"])
         assert results == [
             "考虑符文：泰坦的坚决，可以随掉，2/3，表现: 0.8616，流行度: 0.0",
             "考虑符文：尖端发明家，暂时先别换，1/3，表现: 0.6845，流行度: 1.0",
         ]
 
-    def test_suggest_recommendation_strings_aramkit(self, monkeypatch, fixture_trans_table) -> None:
-        s = _build_suggest(monkeypatch, fixture_trans_table, source="aramkit")
+    def test_suggest_recommendation_strings_aramkit(self, game_data) -> None:
+        s = _build_suggest(game_data, source="aramkit")
         results = s.suggest(["泰坦的坚决", "尖端发明家"])
         assert results == [
             "垃圾符文: 泰坦的坚决，别选，太垃圾了，3/3，表现: 0.0514，流行度: 0.5",
             "考虑符文：尖端发明家，暂时先别换，2/3，表现: 0.5394，流行度: 1.0",
         ]
 
-    def test_suggest_all_unknown_returns_empty(self, monkeypatch, fixture_trans_table) -> None:
-        s = _build_suggest(monkeypatch, fixture_trans_table)
+    def test_suggest_all_unknown_returns_empty(self, game_data) -> None:
+        s = _build_suggest(game_data)
         assert s.suggest(["完全不存在的符文"]) == []
 
-    def test_get_suggest_info_threshold_boundaries(self, monkeypatch, fixture_trans_table) -> None:
-        s = _build_suggest(monkeypatch, fixture_trans_table)
+    def test_get_suggest_info_threshold_boundaries(self, game_data) -> None:
+        s = _build_suggest(game_data)
         # group_size=10 → immediate_rank=1.0, consider_rank=3.0
         base = {
             "name": "X",
@@ -137,7 +130,7 @@ class TestSuggestMethods:
         # 其余 → 垃圾
         assert msg(rank=9, ws=0.2).startswith("垃圾符文:")
 
-    def test_get_suggest_info_empty_and_missing_group_size(self, monkeypatch, fixture_trans_table) -> None:
-        s = _build_suggest(monkeypatch, fixture_trans_table)
+    def test_get_suggest_info_empty_and_missing_group_size(self, game_data) -> None:
+        s = _build_suggest(game_data)
         assert s.get_suggest_info([]) == []
         assert s.get_suggest_info([{"name": "X"}]) == []

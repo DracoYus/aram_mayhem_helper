@@ -1,155 +1,44 @@
+"""数据层：GameData 仓储门面 + AugmentLookup 翻译表查询。"""
+
 import json
 import logging
 from pathlib import Path
-from typing import Dict
 
-import requests
-
-from aram_mayhem_helper.utils.aramkit import aramkit_resources, convert_augment_records
-from aram_mayhem_helper.utils.config import config
+from aram_mayhem_helper.utils.aramkit import AramkitResources, convert_augment_records
+from aram_mayhem_helper.utils.config import AppConfig, get_config
 from aram_mayhem_helper.utils.text_normalization import normalize_for_lookup
 
 
-class Data:
-    def __init__(self):
-        self.game_version: str | None = None
-        self.champion_data: Dict[str, dict] = {}
+class AugmentLookup:
+    """翻译表（augment_trans.json）加载与名称↔ID 查询。
+
+    懒加载：首次查询时读文件并构建索引；``reload()`` 清空缓存后重新读取
+    （修复旧实现 reload_data 不重建翻译表的缺陷）。
+    """
+
+    def __init__(self, trans_file: Path, aramkit_resources: AramkitResources | None = None) -> None:
         self.logger = logging.getLogger(__name__)
-
-    def get_all_champion_data(self) -> Dict[str, dict]:
-        """获取所有英雄的完整数据"""
-        if not self.champion_data:
-            champion_data_path = config.data_path / Path(config.get("crawler", "ddragon", "champion", "save_directory"))
-            if not champion_data_path.exists():
-                return {}
-            files = [f for f in champion_data_path.iterdir() if f.is_file()]
-            if not files:
-                self.logger.error(f"没有找到任何英雄数据文件在: {champion_data_path}")
-                return {}
-            latest_file = max(files, key=lambda f: f.name)
-            try:
-                with open(latest_file, "r", encoding="utf-8") as f:
-                    self.champion_data = json.load(f)["data"]
-
-            except Exception as e:
-                self.logger.error(f"读取英雄ID时发生错误: {str(e)}")
-        return self.champion_data
-
-    def get_latest_ddragon_version(self) -> str:
-        url = "https://ddragon.leagueoflegends.com/api/versions.json"
-        response = requests.get(url)
-        versions = response.json()
-        return versions[0]  # 第一个元素是最新版本
-
-    def get_game_version(self) -> str | None:
-        """获取游戏版本"""
-        if not self.game_version:
-            try:
-                url = "https://ddragon.leagueoflegends.com/api/versions.json"
-                response = requests.get(url)
-                versions = response.json()
-                self.game_version = versions[0]  # 第一个元素是最新版本
-            except Exception as e:
-                self.logger.error(f"获取游戏版本时发生错误: {str(e)}")
-                self.game_version = None
-        return self.game_version
-
-    def get_champion_id_by_name(self, champion_name: str) -> str | None:
-        """根据英雄名称获取英雄 ID"""
-        champion_data = self.get_all_champion_data()
-        for champ_id, champ_info in champion_data.items():
-            if champ_info["id"].lower() == champion_name.lower():
-                return champ_info["key"]
-        self.logger.warning(f"未找到英雄名称 '{champion_name}' 对应的 ID")
-        return None
-
-    def get_champion_name_by_id(self, champion_id: str) -> str | None:
-        """根据英雄 ID（key）获取英雄名称"""
-        champion_data = self.get_all_champion_data()
-        for champ_info in champion_data.values():
-            if champ_info["key"] == champion_id:
-                return champ_info["name"]
-        self.logger.warning(f"未找到英雄 ID '{champion_id}' 对应的名称")
-        return None
-
-
-class ChampionAugmentData:
-    def __init__(self, champion_id: str, source: str = "opgg"):
-        self.champion_id = champion_id
-        self.source = source
-        self.champion_augment_data = None
-        self.logger = logging.getLogger(__name__)
-
-    def get_champion_augment_data(self) -> list[dict]:
-        """获取英雄符文数据（按数据源分发：opgg / aramkit）"""
-        if not self.champion_augment_data:
-            if self.source == "aramkit":
-                champion_data_path = (
-                    config.data_path
-                    / Path(config.get("crawler", "aramkit", "aram_augment", "save_directory"))
-                    / config.get("crawler", "aramkit", "aram_augment", "dataset", default="all")
-                    / f"{self.champion_id}.json"
-                )
-                try:
-                    with open(champion_data_path, "r", encoding="utf-8") as f:
-                        raw_data = json.load(f)
-                except FileNotFoundError:
-                    self.logger.error(f"未找到英雄符文数据文件: {champion_data_path}")
-                    raise
-                except json.JSONDecodeError as e:
-                    self.logger.error(f"英雄符文数据文件格式错误: {champion_data_path}, 错误: {str(e)}")
-                    raise
-                except Exception as e:
-                    self.logger.error(f"读取英雄符文数据文件时发生错误: {champion_data_path}, 错误: {str(e)}")
-                    raise
-                augments = raw_data.get("augments", {}).get("all", [])
-                self.champion_augment_data = convert_augment_records(augments)
-            else:
-                champion_data_path = (
-                    config.data_path
-                    / Path(config.get("crawler", "opgg", "aram_augment", "save_directory"))
-                    / f"{self.champion_id}.json"
-                )
-                try:
-                    with open(champion_data_path, "r", encoding="utf-8") as f:
-                        self.champion_augment_data = json.load(f)
-                except FileNotFoundError:
-                    self.logger.error(f"未找到英雄符文数据文件: {champion_data_path}")
-                    raise
-                except json.JSONDecodeError as e:
-                    self.logger.error(f"英雄符文数据文件格式错误: {champion_data_path}, 错误: {str(e)}")
-                    raise
-                except Exception as e:
-                    self.logger.error(f"读取英雄符文数据文件时发生错误: {champion_data_path}, 错误: {str(e)}")
-                    raise
-        if self.source == "aramkit":
-            return self.champion_augment_data
-        data = self.champion_augment_data.get("data")
-        if data is None:
-            self.logger.warning(f"英雄符文数据文件缺少 'data' 字段: champion_id={self.champion_id}")
-            return []
-        return data
-
-
-class AugmentTool:
-    def __init__(self):
-        self.logger = logging.getLogger(__name__)
-        self.id_name_dict = {}
-        self.name_id_dict = {}
+        self._trans_file = trans_file
+        self._aramkit_resources = aramkit_resources
+        self.id_name_dict: dict[str, dict] = {}
+        self.name_id_dict: dict[str, dict] = {}
         self._name_norm_dict: dict[str, str] = {}  # 归一化名 → 原始名映射
-        trans_file = config.data_path / "augment_trans.json"
-        if trans_file.exists():
+
+    def _load(self) -> None:
+        if self.id_name_dict:
+            return
+        if self._trans_file.exists():
             try:
-                with open(trans_file, "r", encoding="utf-8") as f:
+                with open(self._trans_file, "r", encoding="utf-8") as f:
                     self.id_name_dict = json.load(f)
             except json.JSONDecodeError as e:
-                self.logger.error(f"翻译文件格式错误: {trans_file}, 错误: {str(e)}")
+                self.logger.error(f"翻译文件格式错误: {self._trans_file}, 错误: {str(e)}")
                 raise
             except Exception as e:
-                self.logger.error(f"读取翻译文件时发生错误: {trans_file}, 错误: {str(e)}")
+                self.logger.error(f"读取翻译文件时发生错误: {self._trans_file}, 错误: {str(e)}")
                 raise
         else:
-            self.logger.warning(f"未找到翻译文件: {trans_file}")
+            self.logger.warning(f"未找到翻译文件: {self._trans_file}")
         for aug_id, info in self.id_name_dict.items():
             name = info.get("name")
             level = info.get("level")
@@ -165,8 +54,16 @@ class AugmentTool:
             if norm not in self._name_norm_dict:
                 self._name_norm_dict[norm] = name
 
+    def reload(self) -> None:
+        """清空缓存并立即重新读取翻译表。"""
+        self.id_name_dict = {}
+        self.name_id_dict = {}
+        self._name_norm_dict = {}
+        self._load()
+
     def get_augment_id(self, augment_name: str) -> str | None:
         """根据符文名称获取符文ID，支持空格/连字符的 OCR 变体容错匹配."""
+        self._load()
         # 先精确匹配（快路径）
         augment_info = self.name_id_dict.get(augment_name)
         if augment_info:
@@ -183,87 +80,178 @@ class AugmentTool:
         return None
 
     def get_augment_info(self, augment_id: str) -> dict | None:
-        """根据符文名称获取符文ID"""
+        """根据符文 ID 获取翻译表条目。"""
+        self._load()
         return self.id_name_dict.get(augment_id, None)
 
-    def _save_trans_file(self) -> None:
-        """将当前 in-memory 翻译数据按 ID 排序后写回 augment_trans.json。"""
-        trans_file = config.data_path / "augment_trans.json"
-        try:
-            sorted_dict = {k: self.id_name_dict[k] for k in sorted(self.id_name_dict, key=int)}
-            with open(trans_file, "w", encoding="utf-8") as f:
-                json.dump(sorted_dict, f, ensure_ascii=False, indent=4)
-        except Exception as e:
-            self.logger.error(f"保存翻译文件时发生错误: {trans_file}, 错误: {str(e)}")
 
+class GameData:
+    """游戏数据仓储门面：英雄元数据、符文条目（按 (champion, source) 缓存）、源感知查找。
 
-data = Data()
-champion_augment_data_dict = {}
-aramkit_champion_augment_data_dict = {}
-for champion, champion_info in data.get_all_champion_data().items():
-    champion_augment_data_dict[champion_info["key"]] = ChampionAugmentData(champion_info["key"])
-    aramkit_champion_augment_data_dict[champion_info["key"]] = ChampionAugmentData(
-        champion_info["key"], source="aramkit"
-    )
-augment_tool = AugmentTool()
-
-
-def get_default_source() -> str:
-    """返回配置的数据源，非法值回退 "opgg"。"""
-    src = config.get("data_source", "source", default="opgg")
-    return src if src in ("opgg", "aramkit") else "opgg"
-
-
-def get_champion_augment_data(champion_id: str, source: str | None = None) -> ChampionAugmentData | None:
-    """按数据源（默认取配置）返回英雄符文数据对象。"""
-    source = source or get_default_source()
-    data_dict = champion_augment_data_dict if source == "opgg" else aramkit_champion_augment_data_dict
-    return data_dict.get(champion_id)
-
-
-def get_champion_augment_data_dict(source: str | None = None) -> dict[str, ChampionAugmentData]:
-    """返回对应数据源的 {champion_key: ChampionAugmentData} 字典。"""
-    source = source or get_default_source()
-    return champion_augment_data_dict if source == "opgg" else aramkit_champion_augment_data_dict
-
-
-def get_augment_info_for_source(source: str, augment_id: str) -> dict | None:
-    """根据数据源获取符文信息：翻译表优先，aramkit 缺失时回退其资源文件。"""
-    info = augment_tool.get_augment_info(augment_id)
-    if info is None and source == "aramkit":
-        info = aramkit_resources.get_augment_info(augment_id)
-    return info
-
-
-def get_augment_id_for_source(source: str, augment_name: str) -> str | None:
-    """根据数据源将符文名称反查为 ID：翻译表优先，aramkit 缺失时回退其资源文件。"""
-    augment_id = augment_tool.get_augment_id(augment_name)
-    if augment_id is None and source == "aramkit":
-        augment_id = aramkit_resources.get_augment_id(augment_name)
-    return augment_id
-
-
-def reload_data() -> None:
-    """Reload champion and augment data from disk after crawling.
-
-    Mutates existing singleton objects in-place so that all modules
-    that imported them (gui.py, suggest.py) see updated data without re-importing.
+    构造仅保存配置路径，不产生任何文件读取（无导入期副作用）；
+    ``reload()`` 清空全部缓存（含翻译表与 aramkit 资源）。
     """
-    # Force Data to re-read from disk by clearing its internal caches
-    data.champion_data = {}
-    data.game_version = None
-    data.get_all_champion_data()
 
-    # Rebuild champion_augment_data_dict with fresh ChampionAugmentData instances
-    champion_augment_data_dict.clear()
-    aramkit_champion_augment_data_dict.clear()
-    for champion, champion_info in data.get_all_champion_data().items():
-        champion_augment_data_dict[champion_info["key"]] = ChampionAugmentData(champion_info["key"])
-        aramkit_champion_augment_data_dict[champion_info["key"]] = ChampionAugmentData(
-            champion_info["key"], source="aramkit"
-        )
+    def __init__(self, config: AppConfig) -> None:
+        self.logger = logging.getLogger(__name__)
+        self._config = config
+        self._champion_data: dict[str, dict] | None = None
+        self._entries_cache: dict[tuple[str, str], list[dict]] = {}
+        self._lookup: AugmentLookup | None = None
+        self._resources: AramkitResources | None = None
+
+    # ── 英雄元数据 ──────────────────────────────────────────────────────
+
+    def _champions(self) -> dict[str, dict]:
+        if self._champion_data is None:
+            path = self._config.champion_dir
+            if not path.exists():
+                self._champion_data = {}
+                return self._champion_data
+            files = [f for f in path.iterdir() if f.is_file()]
+            if not files:
+                self.logger.error(f"没有找到任何英雄数据文件在: {path}")
+                self._champion_data = {}
+                return self._champion_data
+            latest_file = max(files, key=lambda f: f.name)
+            try:
+                with open(latest_file, "r", encoding="utf-8") as f:
+                    self._champion_data = json.load(f)["data"]
+            except Exception as e:
+                self.logger.error(f"读取英雄ID时发生错误: {str(e)}")
+                self._champion_data = {}
+        return self._champion_data
+
+    def champion_ids(self) -> list[str]:
+        """全部英雄 ID（按整数升序）。"""
+        return sorted((info["key"] for info in self._champions().values()), key=int)
+
+    def champion_id_by_name(self, champion_name: str) -> str | None:
+        """根据英雄名称获取英雄 ID（不区分大小写）。"""
+        for champ_id, champ_info in self._champions().items():
+            if champ_info["id"].lower() == champion_name.lower():
+                return champ_info["key"]
+        self.logger.warning(f"未找到英雄名称 '{champion_name}' 对应的 ID")
+        return None
+
+    def champion_name(self, champion_id: str) -> str | None:
+        """根据英雄 ID（key）获取英雄名称。"""
+        for champ_info in self._champions().values():
+            if champ_info["key"] == champion_id:
+                return champ_info["name"]
+        self.logger.warning(f"未找到英雄 ID '{champion_id}' 对应的名称")
+        return None
+
+    # ── 符文条目 ────────────────────────────────────────────────────────
+
+    def augment_entries(self, champion_id: str, source: str | None = None) -> list[dict] | None:
+        """返回该英雄的引擎标准符文条目。
+
+        Args:
+            champion_id: 英雄 ID
+            source: 数据源（"opgg"/"aramkit"），None 取配置默认
+
+        Returns:
+            条目列表；英雄未知时返回 None；文件缺失/损坏时照旧抛出
+            ``FileNotFoundError``/``JSONDecodeError``
+        """
+        source = source or self.default_source()
+        if self.champion_name(champion_id) is None:
+            return None
+        cache_key = (champion_id, source)
+        if cache_key in self._entries_cache:
+            return self._entries_cache[cache_key]
+        if source == "aramkit":
+            champion_data_path = self._config.aramkit_augment_dir / f"{champion_id}.json"
+            try:
+                with open(champion_data_path, "r", encoding="utf-8") as f:
+                    raw_data = json.load(f)
+            except FileNotFoundError:
+                self.logger.error(f"未找到英雄符文数据文件: {champion_data_path}")
+                raise
+            except json.JSONDecodeError as e:
+                self.logger.error(f"英雄符文数据文件格式错误: {champion_data_path}, 错误: {str(e)}")
+                raise
+            except Exception as e:
+                self.logger.error(f"读取英雄符文数据文件时发生错误: {champion_data_path}, 错误: {str(e)}")
+                raise
+            entries = convert_augment_records(raw_data.get("augments", {}).get("all", []))
+        else:
+            champion_data_path = self._config.opgg_augment_dir / f"{champion_id}.json"
+            try:
+                with open(champion_data_path, "r", encoding="utf-8") as f:
+                    raw_data = json.load(f)
+            except FileNotFoundError:
+                self.logger.error(f"未找到英雄符文数据文件: {champion_data_path}")
+                raise
+            except json.JSONDecodeError as e:
+                self.logger.error(f"英雄符文数据文件格式错误: {champion_data_path}, 错误: {str(e)}")
+                raise
+            except Exception as e:
+                self.logger.error(f"读取英雄符文数据文件时发生错误: {champion_data_path}, 错误: {str(e)}")
+                raise
+            data = raw_data.get("data")
+            if data is None:
+                self.logger.warning(f"英雄符文数据文件缺少 'data' 字段: champion_id={champion_id}")
+                entries = []
+            else:
+                entries = data
+        self._entries_cache[cache_key] = entries
+        return entries
+
+    def augment_entries_all(self, source: str | None = None) -> dict[str, list[dict] | None]:
+        """全部英雄的条目（懒加载，供 web 列表构建）。"""
+        source = source or self.default_source()
+        return {cid: self.augment_entries(cid, source) for cid in self.champion_ids()}
+
+    # ── 源感知符文查找 ──────────────────────────────────────────────────
+
+    def _lookup_impl(self) -> AugmentLookup:
+        if self._lookup is None:
+            self._lookup = AugmentLookup(self._config.trans_file, self._resources_impl())
+        return self._lookup
+
+    def _resources_impl(self) -> AramkitResources:
+        if self._resources is None:
+            self._resources = AramkitResources(self._config.aramkit_resources_dir)
+        return self._resources
+
+    def augment_info(self, augment_id: str, source: str | None = None) -> dict | None:
+        """根据数据源获取符文信息：翻译表优先，aramkit 缺失时回退其资源文件。"""
+        source = source or self.default_source()
+        info = self._lookup_impl().get_augment_info(augment_id)
+        if info is None and source == "aramkit":
+            info = self._resources_impl().get_augment_info(augment_id)
+        return info
+
+    def augment_id(self, augment_name: str, source: str | None = None) -> str | None:
+        """根据数据源将符文名称反查为 ID：翻译表优先，aramkit 缺失时回退其资源文件。"""
+        source = source or self.default_source()
+        augment_id = self._lookup_impl().get_augment_id(augment_name)
+        if augment_id is None and source == "aramkit":
+            augment_id = self._resources_impl().get_augment_id(augment_name)
+        return augment_id
+
+    def default_source(self) -> str:
+        """配置默认数据源。"""
+        return self._config.data_source.source
+
+    # ── 刷新 ────────────────────────────────────────────────────────────
+
+    def reload(self) -> None:
+        """清空全部缓存（英雄数据、符文条目、翻译表、aramkit 资源），下次访问重新读取。"""
+        self._champion_data = None
+        self._entries_cache.clear()
+        self._lookup_impl().reload()
+        self._resources_impl().reload()
 
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s")
-    reload_data()
+_game_data_singleton: GameData | None = None
+
+
+def get_game_data() -> GameData:
+    """懒加载 GameData 单例（替代旧导入期构建全部数据对象的副作用）。"""
+    global _game_data_singleton
+    if _game_data_singleton is None:
+        _game_data_singleton = GameData(get_config())
+    return _game_data_singleton

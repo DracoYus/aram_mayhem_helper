@@ -1,10 +1,14 @@
-"""共享测试夹具：将 tests/fixtures/ 复制到临时数据目录并指向 config.data_path。"""
+"""共享测试夹具：将 tests/fixtures/ 复制到临时数据目录并构造注入 fixture 的 GameData。"""
 
 import json
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+
+from aram_mayhem_helper.utils.config import get_config
+from aram_mayhem_helper.utils.data import GameData
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -18,12 +22,15 @@ def fixture_data_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def patch_config_data_path(monkeypatch: pytest.MonkeyPatch, fixture_data_dir: Path) -> Path:
-    """将 config.data_path 指向 fixture 数据目录（数据类均在调用时读取该路径）。"""
-    from aram_mayhem_helper.utils.config import config
+def app_config(fixture_data_dir: Path):
+    """数据目录指向 fixture 的 AppConfig（其余配置沿用真实 config.toml）。"""
+    return replace(get_config(), data_dir=fixture_data_dir)
 
-    monkeypatch.setattr(config, "data_path", fixture_data_dir)
-    return fixture_data_dir
+
+@pytest.fixture
+def game_data(app_config) -> GameData:
+    """指向 fixture 数据目录的 GameData 仓储。"""
+    return GameData(app_config)
 
 
 @pytest.fixture

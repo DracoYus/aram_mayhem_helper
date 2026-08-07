@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 import requests
 
 from aram_mayhem_helper.utils.config import config
-from aram_mayhem_helper.utils.data import data
+from aram_mayhem_helper.utils.data import get_game_data
 from aram_mayhem_helper.utils.retry import retry_on_exception
 
 
@@ -129,9 +129,7 @@ class AramAugmentCrawler:
         failed_ids = []
         fail_count = 0
 
-        all_champion_data = data.get_all_champion_data()
-        champion_id_list = [int(champion["key"]) for champion in all_champion_data.values()]
-        champion_id_list.sort()
+        champion_id_list = [int(champion_id) for champion_id in get_game_data().champion_ids()]
         for champion_id in champion_id_list:
             if champion_id < start_id or champion_id > end_id:
                 continue

@@ -1,79 +1,54 @@
+"""符文推荐引擎：分组打分 + 阈值建议（"快选"/"考虑"/"垃圾"）。"""
+
 import logging
 
-from aram_mayhem_helper.utils.config import config
-from aram_mayhem_helper.utils.data import (
-    ChampionAugmentData,
-    get_augment_id_for_source,
-    get_augment_info_for_source,
-)
-from aram_mayhem_helper.utils.norm import add_bayesian_sigmoid_score_attr, add_unit_scale_attr
+from aram_mayhem_helper.algorithm.pipeline import build_scored_groups
+from aram_mayhem_helper.utils.config import SuggestConfig
+from aram_mayhem_helper.utils.data import GameData
 
 
 class Suggest:
-    immediate_select_score_threshold = config.get("suggest", "immediate_select_score_threshold")
-    immediate_select_precentage_threshold = config.get("suggest", "immediate_select_precentage_threshold")
-    consider_select_score_threshold = config.get("suggest", "consider_select_score_threshold")
-    consider_select_precentage_threshold = config.get("suggest", "consider_select_precentage_threshold")
-    shrinkage_tau_factor = config.get("suggest", "shrinkage_tau_factor")
-    sigmoid_steepness = config.get("suggest", "sigmoid_steepness")
+    """对单个英雄的符文数据进行打分与推荐。
 
-    def __init__(self, champion_augment_data: ChampionAugmentData):
+    Args:
+        champion_id: 英雄 ID
+        data: GameData 仓储（注入，便于测试与多实例）
+        source: 数据源（"opgg"/"aramkit"），None 取配置默认
+        thresholds: 推荐阈值（实例数据，替代旧实现的类属性在导入时读配置）
+    """
+
+    def __init__(
+        self,
+        champion_id: str,
+        data: GameData,
+        *,
+        source: str | None = None,
+        thresholds: SuggestConfig,
+    ) -> None:
         self.logger = logging.getLogger(__name__)
-        self.source = champion_augment_data.source
+        self.champion_id = champion_id
+        self.data = data
+        self.source = source or data.default_source()
+        self.thresholds = thresholds
 
-        raw_champion_augment_data = champion_augment_data.get_champion_augment_data()
-        filtered_data = []
-        for item in raw_champion_augment_data:
-            perf = item.get("performance")
-            pop = item.get("popular")
-            if perf is None or pop is None:
-                self.logger.warning(
-                    f"英雄id:{champion_augment_data.champion_id}，符文数据项缺少 performance/popular 字段: {item}"
-                )
-                continue
-            if pop == 0:
-                continue
-            filtered_data.append(item)
-        self.champion_augment_data = filtered_data
-        self.augment_group = {}
-        for item in self.champion_augment_data:
-            # 根据符文级别对符文进行分组
-            item_id = item.get("id")
-            if item_id is None:
-                self.logger.warning(f"英雄id:{champion_augment_data.champion_id}，符文数据项缺少 'id' 字段: {item}")
-                continue
-            augment_info = get_augment_info_for_source(self.source, str(item_id))
-            if not augment_info:
-                continue
-            level = augment_info["level"]
-            item["level"] = level
-            item["name"] = augment_info["name"]
-            if level not in self.augment_group:
-                self.augment_group[level] = {}
-                self.augment_group[level]["augments"] = []
-            self.augment_group[level]["augments"].append(item)
-        for group_level, group_data in self.augment_group.items():
-            grouped_augments = group_data["augments"]
-            group_size = len(grouped_augments)
-            group_data["number"] = group_size
-            # 统一数据源尺度：performance/popular 先 min-max 缩放到 [0,1]
-            add_unit_scale_attr(grouped_augments)
-            add_bayesian_sigmoid_score_attr(
-                grouped_augments,
-                perf_attr="performance_unit",
-                pop_attr="popular_unit",
-                new_attr="weighted_sum",
-                tau_factor=Suggest.shrinkage_tau_factor,
-                sigmoid_steepness=Suggest.sigmoid_steepness,
-                perf_display_attr="performance_norm",
-                pop_display_attr="popular_norm",
-            )
-            #  对每个组进行排序，统计名次
-            sorted_group_data = sorted(grouped_augments, key=lambda x: x["weighted_sum"], reverse=True)
-            group_data["augments"] = sorted_group_data
-            for idx, item in enumerate(sorted_group_data):
-                item["rank"] = idx + 1
-                item["group_size"] = group_size
+        entries = data.augment_entries(champion_id, self.source)
+        if entries is None:
+            entries = []
+
+        self.champion_augment_data: list[dict] = []
+        self.augment_group: dict[str, dict] = {}
+        groups = build_scored_groups(
+            entries,
+            lookup=lambda augment_id: data.augment_info(augment_id, self.source),
+            tau_factor=thresholds.shrinkage_tau_factor,
+            sigmoid_steepness=thresholds.sigmoid_steepness,
+            assign_rank=True,
+            champion_id=champion_id,
+            logger=self.logger,
+        )
+        for level, items in groups:
+            self.augment_group[level] = {"augments": items, "number": len(items)}
+            self.champion_augment_data.extend(items)
 
     def get_augment_info_by_id(self, augment_id: str) -> dict | None:
         """
@@ -105,7 +80,7 @@ class Suggest:
         """
         augment_info = []
         for augment in augments:
-            augment_id = get_augment_id_for_source(self.source, augment)
+            augment_id = self.data.augment_id(augment, self.source)
             if not augment_id:
                 self.logger.warning(f"无法识别符文名称 '{augment}'，翻译文件中未找到匹配")
                 continue
@@ -140,8 +115,9 @@ class Suggest:
         if augments_num is None:
             self.logger.warning("符文数据缺少 'group_size' 字段，无法生成建议")
             return []
-        immediate_select_rank_threshold = augments_num * Suggest.immediate_select_precentage_threshold
-        consider_select_rank_threshold = augments_num * Suggest.consider_select_precentage_threshold
+        t = self.thresholds
+        immediate_select_rank_threshold = augments_num * t.immediate_select_percentage_threshold
+        consider_select_rank_threshold = augments_num * t.consider_select_percentage_threshold
         max_weighted_sum = max(item.get("weighted_sum", 0) for item in augments if item is not None)
         result = []
         for augment in augments:
@@ -153,9 +129,9 @@ class Suggest:
             perf_norm = augment.get("performance_norm", "N/A")
             pop_norm = augment.get("popular_norm", "N/A")
             message = None
-            if rank <= immediate_select_rank_threshold or ws >= Suggest.immediate_select_score_threshold:
+            if rank <= immediate_select_rank_threshold or ws >= t.immediate_select_score_threshold:
                 message = f"快选符文：{name}，别的不用看了"
-            elif rank <= consider_select_rank_threshold or ws >= Suggest.consider_select_score_threshold:
+            elif rank <= consider_select_rank_threshold or ws >= t.consider_select_score_threshold:
                 if max_weighted_sum == ws:
                     message = f"考虑符文：{name}，暂时先别换"
                 else:
@@ -166,17 +142,3 @@ class Suggest:
             result.append(message)
 
         return result
-
-
-if __name__ == "__main__":
-    # all_champion_data = data.get_all_champion_data()
-    # chamoion_id_list = [int(champion["key"]) for champion in all_champion_data.values()]
-    # chamoion_id_list.sort()
-    # for champion_id in chamoion_id_list:
-    #     champion_augment_data = ChampionAugmentData(champion_id)
-    #     suggest = Suggest(champion_augment_data)
-    #     suggest.suggest(["老练狙神", "红包", "吞噬灵魂"])
-    champion_augment_data = ChampionAugmentData("99")
-    suggest = Suggest(champion_augment_data)
-    suggests = suggest.suggest(["老练狙神", "红包", "吞噬灵魂"])
-    print(suggests)

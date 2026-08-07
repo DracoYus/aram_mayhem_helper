@@ -13,11 +13,9 @@ from aram_mayhem_helper.crawlers.ddragon.champion_crawler import ChampionCrawler
 from aram_mayhem_helper.crawlers.opgg.aram_augment_crawler import AramAugmentCrawler
 from aram_mayhem_helper.league_client_api.live_data import get_current_champion_name
 from aram_mayhem_helper.ocr.ocr_tool import ocr_tool
-from aram_mayhem_helper.utils.data import data, get_champion_augment_data, reload_data
+from aram_mayhem_helper.utils.config import get_config
+from aram_mayhem_helper.utils.data import get_game_data
 from aram_mayhem_helper.utils.log_config import setup_logging
-
-current_champion_id = None
-suggest = None
 
 
 # ====================== 第一步：定义日志输出函数（核心） ======================
@@ -85,8 +83,8 @@ def recognize_augment(log_area: scrolledtext.ScrolledText) -> None:
     """识别符文和展示结果（自动先识别当前英雄）"""
     print_log("开始执行「识别符文」操作...", log_area)
 
-    global suggest
-    global current_champion_id
+    game_data = get_game_data()
+    suggest: Suggest | None = None
 
     # 自动识别英雄
     try:
@@ -94,18 +92,18 @@ def recognize_augment(log_area: scrolledtext.ScrolledText) -> None:
         if not champion_name:
             print_log("无法获取当前英雄名称，请确保游戏正在运行", log_area)
             return
-        current_champion_id = data.get_champion_id_by_name(champion_name)
-        if not current_champion_id:
+        champion_id = game_data.champion_id_by_name(champion_name)
+        if not champion_id:
             print_log(f"无法找到英雄 '{champion_name}' 对应的ID", log_area)
             return
-        champion_augment_data = get_champion_augment_data(current_champion_id)
-        if not champion_augment_data:
+        entries = game_data.augment_entries(champion_id)
+        if entries is None:
             print_log(
-                f"英雄ID {current_champion_id} ({champion_name}) 的符文数据不存在",
+                f"英雄ID {champion_id} ({champion_name}) 的符文数据不存在",
                 log_area,
             )
             return
-        suggest = Suggest(champion_augment_data)
+        suggest = Suggest(champion_id, game_data, thresholds=get_config().suggest)
         print_log(f"当前英雄：{champion_name}", log_area)
     except Exception as e:
         print_log(f"识别英雄出错：{str(e)}", log_area)
@@ -115,6 +113,7 @@ def recognize_augment(log_area: scrolledtext.ScrolledText) -> None:
     augments = None
     try:
         augments = ocr_tool.get_augments()
+        assert suggest is not None
         augments_info = suggest.suggest(augments)
         for augment_info in augments_info:
             print_log(str(augment_info), log_area)
@@ -172,7 +171,7 @@ def _finish_crawl(
         btn.config(state=tk.NORMAL)
     print_log("数据抓取完成，正在重新加载数据...", log_area)
     try:
-        reload_data()
+        get_game_data().reload()
         print_log("数据已重新加载，新数据已生效", log_area)
     except Exception as e:
         print_log(f"数据重新加载失败：{e}", log_area)
