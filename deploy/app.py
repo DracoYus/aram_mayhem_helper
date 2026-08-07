@@ -25,7 +25,7 @@ I18N_FILE = DATA_DIR / "champions-names-i18n.json"
 AUG_DESC_FILE = DATA_DIR / "aram-mayhem-augments.zh_cn.json"
 
 # 默认数据源: "opgg" | "aramkit"
-DEFAULT_SOURCE = "opgg"
+DEFAULT_SOURCE = "aramkit"
 # aramkit rarity → level（2=棱彩, 1=黄金, 0=白银）
 RARITY_TO_LEVEL = {"prismatic": "2", "gold": "1", "silver": "0"}
 
