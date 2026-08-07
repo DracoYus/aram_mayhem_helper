@@ -15,7 +15,8 @@ dependencies = [
 authors = [{ name = "DracoYu", email = "876319691@qq.com" }]
 
 [project.scripts]
-main = "aram_mayhem_helper.cli:main"
+aram-mayhem-helper = "aram_mayhem_helper.cli:cli_main"
+main = "aram_mayhem_helper.cli:cli_main"
 
 [tool.uv]
 package = true

@@ -49,44 +49,54 @@ def aramkit_crawler(start_id: int = 1, end_id: int = 999, dataset: str | None = 
     logger.info("aramkit.com 英雄符文数据爬取完成")
 
 
-def main() -> None:
+def recommend() -> None:
     """
-    程序主入口，截图并推荐
+    截图并推荐（OCR 识别当前对局符文）
     """
     logger.info("开始执行主程序")
-    champion_name = get_current_champion_name()
-    if not champion_name:
-        logger.error("无法获取当前英雄名称")
+    try:
+        champion_name = get_current_champion_name()
+        if not champion_name:
+            logger.error("无法获取当前英雄名称")
+            return
+
+        game_data = get_game_data()
+        champion_id = game_data.champion_id_by_name(champion_name)
+        if not champion_id:
+            logger.error(f"无法找到英雄名称 '{champion_name}' 对应的ID")
+            return
+
+        if game_data.augment_entries(champion_id) is None:
+            logger.error(f"英雄ID {champion_id} 的符文数据不存在")
+            return
+
+        suggest = Suggest(champion_id, game_data, thresholds=get_config().suggest)
+        arguments = ocr_tool.get_augments()
+        results = suggest.suggest(arguments)
+        if results:
+            for result in results:
+                print(result)
+                logger.info(result)
+        else:
+            logger.warning("未能生成任何符文建议")
+        logger.info("主程序执行完成")
+    except Exception as e:
+        logger.error(f"推荐流程执行出错: {e}")
         return
 
-    game_data = get_game_data()
-    champion_id = game_data.champion_id_by_name(champion_name)
-    if not champion_id:
-        logger.error(f"无法找到英雄名称 '{champion_name}' 对应的ID")
-        return
 
-    if game_data.augment_entries(champion_id) is None:
-        logger.error(f"英雄ID {champion_id} 的符文数据不存在")
-        return
-
-    suggest = Suggest(champion_id, game_data, thresholds=get_config().suggest)
-    arguments = ocr_tool.get_augments()
-    results = suggest.suggest(arguments)
-    if results:
-        for result in results:
-            print(result)
-            logger.info(result)
-    else:
-        logger.warning("未能生成任何符文建议")
-    logger.info("主程序执行完成")
-
-
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """
     解析命令行参数
+
+    Args:
+        argv: 参数列表，None 时取 sys.argv[1:]
     """
     parser = argparse.ArgumentParser(description="ARAM Mayhem Helper 命令行工具")
     subparsers = parser.add_subparsers(dest="command", help="可用命令")
+
+    # recommend 命令（main 为兼容别名）
+    subparsers.add_parser("recommend", aliases=["main"], help="截图识别当前对局符文并给出推荐")
 
     # aram_augment_crawler 命令
     aram_augment_parser = subparsers.add_parser("aram-augment-crawler", help="爬取英雄符文数据")
@@ -104,29 +114,35 @@ def parse_args() -> argparse.Namespace:
         "--dataset", type=str, choices=["all", "high"], default=None, help="数据集: all(全体)/high(高分段)，默认取配置"
     )
 
-    # main 命令
-    subparsers.add_parser("main", help="执行主程序，截图并推荐")
-
     # web 命令
     web_parser = subparsers.add_parser("web", help="启动网页应用，浏览符文数据")
     web_parser.add_argument("--host", type=str, default="127.0.0.1", help="监听地址，默认 127.0.0.1")
     web_parser.add_argument("--port", type=int, default=5000, help="监听端口，默认 5000")
 
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-if __name__ == "__main__":
+def cli_main(argv: list[str] | None = None) -> int:
+    """CLI 分发入口（console script 指向此函数，替代旧的 __main__ 块）。
+
+    Args:
+        argv: 参数列表，None 时取 sys.argv[1:]
+
+    Returns:
+        退出码（0 成功；无命令且推荐失败时 1）
+    """
     setup_logging()
-    args = parse_args()
+    args = parse_args(argv)
 
-    if args.command == "aram-augment-crawler":
+    if args.command in (None, "recommend", "main"):
+        # 无子命令时默认执行推荐（兼容旧 console script 直接调用的行为）
+        recommend()
+    elif args.command == "aram-augment-crawler":
         aram_augment_crawler(args.start_page, args.end_page)
     elif args.command == "champion-crawler":
         champion_crawler()
     elif args.command == "aramkit-crawler":
         aramkit_crawler(args.start_id, args.end_id, args.dataset)
-    elif args.command == "main":
-        main()
     elif args.command == "web":
         from aram_mayhem_helper.web import create_app
 
@@ -134,10 +150,9 @@ if __name__ == "__main__":
         create_app().run(host=args.host, port=args.port, debug=False)
     else:
         logger.error("请指定要执行的命令")
-        print("使用方法:")
-        print("  python -m aram_mayhem_helper.cli aram-augment-crawler [--start-page START_PAGE] [--end-page END_PAGE]")
-        print("  python -m aram_mayhem_helper.cli champion-crawler")
-        print("  python -m aram_mayhem_helper.cli aramkit-crawler [--start-id START_ID] [--end-id END_ID]")
-        print("                             [--dataset all|high]")
-        print("  python -m aram_mayhem_helper.cli main")
-        print("  python -m aram_mayhem_helper.cli web [--host HOST] [--port PORT]")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli_main())
