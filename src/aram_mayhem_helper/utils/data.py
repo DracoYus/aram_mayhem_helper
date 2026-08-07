@@ -7,7 +7,7 @@ import requests
 
 from aram_mayhem_helper.utils.aramkit import aramkit_resources, convert_augment_records
 from aram_mayhem_helper.utils.config import config
-from aram_mayhem_helper.utils.text_normalization import normalize_for_lookup, normalize_text
+from aram_mayhem_helper.utils.text_normalization import normalize_for_lookup
 
 
 class Data:

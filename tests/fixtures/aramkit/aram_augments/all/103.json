@@ -1,0 +1,14 @@
+{
+  "augments": {
+    "all": [
+      {"id": 1001, "rank": 1, "sampleCount": 1000, "pickRate": 0.1, "winRate": 0.55},
+      {"id": 1002, "rank": 2, "sampleCount": 2000, "pickRate": 0.2, "winRate": 0.52},
+      {"id": 1003, "rank": 4, "sampleCount": 1500, "pickRate": 0.15, "winRate": 0.5},
+      {"id": 7777, "rank": 3, "sampleCount": 500, "pickRate": 0.05, "winRate": 0.6},
+      {"id": 1004, "rank": 7, "sampleCount": 600, "pickRate": 0.08, "winRate": 0.51},
+      {"id": 1005, "rank": 5, "sampleCount": 800, "pickRate": 0.25, "winRate": 0.58},
+      {"id": 1006, "rank": 6, "sampleCount": 1200, "pickRate": 0.18, "winRate": 0.53}
+    ],
+    "stages": []
+  }
+}

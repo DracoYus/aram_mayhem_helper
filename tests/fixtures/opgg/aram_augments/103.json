@@ -1,0 +1,11 @@
+{
+  "data": [
+    {"id": 1001, "tier": 0, "performance": 80.0, "popular": 10.0},
+    {"id": 1002, "tier": 0, "performance": 70.0, "popular": 20.0},
+    {"id": 1003, "tier": 0, "performance": 65.0, "popular": 15.0},
+    {"id": 1004, "tier": 0, "performance": 60.0, "popular": 30.0},
+    {"id": 1005, "tier": 0, "performance": 75.0, "popular": 25.0},
+    {"id": 1006, "tier": 0, "performance": 68.0, "popular": 18.0},
+    {"id": 9999, "tier": 0, "performance": 50.0, "popular": 40.0}
+  ]
+}

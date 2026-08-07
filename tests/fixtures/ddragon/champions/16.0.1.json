@@ -1,0 +1,9 @@
+{
+  "type": "champion",
+  "version": "16.0.1",
+  "data": {
+    "Ahri": {"id": "Ahri", "key": "103", "name": "Ahri"},
+    "Aatrox": {"id": "Aatrox", "key": "266", "name": "Aatrox"},
+    "Ashe": {"id": "Ashe", "key": "22", "name": "Ashe"}
+  }
+}
