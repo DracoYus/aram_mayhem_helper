@@ -1,5 +1,6 @@
 .venv/
 __pycache__/
+.coverage
 data/ddragon/
 data/opgg/
 data/aramkit/
