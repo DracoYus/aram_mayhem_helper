@@ -135,6 +135,11 @@ def _recognize_worker() -> None:
             logger.info(str(augments))
 
 
+def _warmup_ocr() -> None:
+    """后台线程预热 OCR 模型（静默执行：失败也不影响，首次识别时 OCRTool 会重新加载）。"""
+    get_ocr_tool().warmup()
+
+
 # ====================== 第三步：后台任务（后台线程 + 日志桥接） ======================
 _task_in_progress = False
 
@@ -330,10 +335,11 @@ def create_gui() -> None:
     root.geometry(f"{win_w}x{win_h}+{x}+{y}")
     root.minsize(_scaled(600, scale), _scaled(300, scale))
 
-    # Font sizes
-    btn_font = ("微软雅黑", max(7, min(round(7 * scale), 14)))
-    label_font = ("微软雅黑", max(6, min(round(6 * scale), 12)))
-    log_font = ("Consolas", max(7, min(round(7 * scale), 14)))
+    # Font sizes: 基础值按 1080p（100% 缩放）下的可读字号设定，
+    # scale 继续按 DPI 放大高分辨率屏幕的字号。
+    btn_font = ("微软雅黑", max(9, min(round(10 * scale), 16)))
+    label_font = ("微软雅黑", max(8, min(round(9 * scale), 14)))
+    log_font = ("Consolas", max(9, min(round(10 * scale), 16)))
 
     # Padding
     pad_lg = _scaled(20, scale)
@@ -421,6 +427,9 @@ def create_gui() -> None:
 
     # 初始化日志
     print_log("GUI已启动，等待执行操作...", log_area)
+
+    # 后台预热 PaddleOCR 模型：首次初始化需数秒，预热后首次识别不再卡顿（静默执行）
+    threading.Thread(target=_warmup_ocr, daemon=True).start()
 
     # 窗口关闭时清理日志 handler，避免资源泄漏
     def _on_closing() -> None:

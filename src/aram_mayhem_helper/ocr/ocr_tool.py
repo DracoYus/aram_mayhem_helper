@@ -5,6 +5,7 @@ PaddleOCR/PIL/screeninfo 均在方法内懒导入：模块导入本身不加载�
 """
 
 import logging
+import threading
 from typing import Any
 
 import numpy as np
@@ -53,24 +54,37 @@ class OCRTool:
         self.show_log = show_log
         self.logger = logging.getLogger(__name__)
         self._ocr: Any = None
+        self._ocr_lock = threading.Lock()
         self._screen_size: tuple[int, int] | None = None
 
     def _get_ocr(self) -> Any:
-        """懒加载 PaddleOCR 模型实例。"""
+        """懒加载 PaddleOCR 模型实例（加锁防止预热与首次识别并发重复加载）。"""
         if self._ocr is None:
-            from paddleocr import PaddleOCR
+            with self._ocr_lock:
+                if self._ocr is None:
+                    from paddleocr import PaddleOCR
 
-            self._ocr = PaddleOCR(
-                use_angle_cls=self.use_angle_cls,
-                lang=self.lang,
-                show_log=self.show_log,
-                use_gpu=self.use_gpu,
-                det_db_thresh=0.2,
-                det_db_box_thresh=0.3,
-                det_db_unclip_ratio=2.0,
-                det_db_score_mode="fast",  # 加快检测速度，不影响合并
-            )
+                    self._ocr = PaddleOCR(
+                        use_angle_cls=self.use_angle_cls,
+                        lang=self.lang,
+                        show_log=self.show_log,
+                        use_gpu=self.use_gpu,
+                        det_db_thresh=0.2,
+                        det_db_box_thresh=0.3,
+                        det_db_unclip_ratio=2.0,
+                        det_db_score_mode="fast",  # 加快检测速度，不影响合并
+                    )
         return self._ocr
+
+    def warmup(self) -> None:
+        """预加载 PaddleOCR 模型（GUI 启动时后台调用，避免首次识别等待模型加载）。
+
+        失败仅记录日志，不影响后续使用——首次识别时 `_get_ocr` 会重新加载。
+        """
+        try:
+            self._get_ocr()
+        except Exception:
+            self.logger.exception("OCR 模型预热失败，首次识别时将重新加载")
 
     @property
     def screen_size(self) -> tuple[int, int]:
