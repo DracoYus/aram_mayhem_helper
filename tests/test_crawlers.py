@@ -191,6 +191,17 @@ class TestAramkitCrawler:
         assert crawler.data_version == "16.15-20260801-aaaaaaaaaaaa"
         assert any("16.15-abc123456789/zh-CN/resources/augments.json" in u for u in calls)
 
+    def test_crawl_empty_results_returns_false(self, crawler_env, monkeypatch) -> None:
+        # 英雄数据未抓取时结果为空：all({}) 恒为 True 会误报「全部成功」，需显式判空
+        crawler = self._make(crawler_env, monkeypatch)
+        crawler.fetch_text = lambda url: (  # type: ignore[method-assign]
+            '<script src="/assets/data/16.15-20260801-aaaaaaaaaaaa.js"></script>'
+            '<link href="/assets/resources/16.15-abc123456789.css">'
+        )
+        crawler.fetch_json = lambda url: {"a": 1}  # type: ignore[method-assign]
+        crawler.batch_crawl = lambda start_id, end_id: {}  # type: ignore[method-assign]
+        assert crawler.crawl(1, 999) is False
+
 
 class TestChampionCrawler:
     def test_crawl_fetches_latest_version(self, crawler_env, monkeypatch) -> None:

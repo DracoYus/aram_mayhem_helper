@@ -1,6 +1,7 @@
 """配置加载：TOML → 冻结数据类，支持显式路径与环境变量注入。"""
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -248,6 +249,90 @@ def get_config() -> AppConfig:
     global _config_singleton
     if _config_singleton is None:
         _config_singleton = load_config()
+    return _config_singleton
+
+
+# ── 数据源写回（GUI 切换数据源持久化）──────────────────────────────────────
+
+_SECTION_HEADER_RE = re.compile(r"^\[(?P<name>[^\]]+)\]")
+_SOURCE_VALUE_RE = re.compile(
+    r'^(?P<indent>[ \t]*)source[ \t]*=[ \t]*(?P<quote>["\'])(?P<old>[^"\']*)(?P=quote)(?P<tail>.*)$'
+)
+
+
+def _rewrite_data_source_text(content: str, source: str) -> str:
+    """纯函数：替换 config.toml 文本中 ``[data_source]`` 段内 source 的值。
+
+    逐行扫描并跟踪当前段落，只改 ``data_source`` 段内的 ``source = "..."`` 行；
+    保留注释、缩进、行尾内容与换行风格（含 CRLF）。单/双引号值均可识别，
+    替换时统一规范化为双引号。段落或键缺失时抛 ``ValueError``（不写盘）。
+
+    Args:
+        content: config.toml 原始文本
+        source: 新数据源（"opgg"/"aramkit"）
+    """
+    newline = "\r\n" if "\r\n" in content else "\n"
+    lines = content.split(newline)
+    in_data_source = False
+    section_seen = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("["):
+            match = _SECTION_HEADER_RE.match(stripped)
+            # TOML 允许表头内包围空白与引号键（[ data_source ] / ["data_source"]）
+            in_data_source = bool(match and match.group("name").strip().strip('"') == "data_source")
+            section_seen = section_seen or in_data_source
+            continue
+        if in_data_source:
+            match = _SOURCE_VALUE_RE.match(line)
+            if match:
+                if match.group("old") == source:
+                    return content  # 值未变，原样返回
+                lines[i] = f'{match.group("indent")}source = "{source}"{match.group("tail")}'
+                return newline.join(lines)
+    if not section_seen:
+        raise ValueError("config.toml 中未找到 [data_source] 段落")
+    raise ValueError("config.toml 的 [data_source] 段中未找到 source 配置行")
+
+
+def set_data_source(source: str) -> AppConfig:
+    """持久化写入数据源到 config.toml，重建配置单例并返回新配置。
+
+    校验通过后以「同目录临时文件 + os.replace」原子写回（保留注释与其他内容），
+    随后按原 config_path/data_dir 重建 ``_config_singleton``，使后续 ``get_config()``
+    读到新值。
+
+    Args:
+        source: 数据源（"opgg"/"aramkit"）
+
+    Raises:
+        ValueError: source 非法，或 config.toml 缺少 [data_source].source
+        OSError: 文件读取/写入失败
+    """
+    global _config_singleton
+    if source not in VALID_SOURCES:
+        raise ValueError(f"非法数据源 {source!r}，可选: {', '.join(VALID_SOURCES)}")
+
+    current = get_config()
+    if current.data_source.source == source:
+        return current
+
+    # newline="" 显式往返：保留原始换行风格（含 CRLF），不依赖平台换行翻译
+    with current.config_path.open(encoding="utf-8", newline="") as f:
+        content = f.read()
+    new_content = _rewrite_data_source_text(content, source)
+
+    tmp_path = current.config_path.with_name(current.config_path.name + ".tmp")
+    try:
+        with tmp_path.open("w", encoding="utf-8", newline="") as f:
+            f.write(new_content)
+        os.replace(tmp_path, current.config_path)  # 同目录 → 同卷，Windows 原子替换
+    except OSError:
+        tmp_path.unlink(missing_ok=True)  # 清理半成品
+        raise
+
+    # 重建单例时沿用旧 data_dir，保留 env/参数注入的 data_dir 语义
+    _config_singleton = load_config(config_path=current.config_path, data_dir=current.data_dir)
     return _config_singleton
 
 

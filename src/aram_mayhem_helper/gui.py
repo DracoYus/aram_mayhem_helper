@@ -6,14 +6,15 @@ import threading
 import time
 import tkinter as tk
 from collections.abc import Callable
-from tkinter import scrolledtext
+from tkinter import scrolledtext, ttk
 
 from aram_mayhem_helper.algorithm.suggest import Suggest
+from aram_mayhem_helper.crawlers.aramkit.aramkit_crawler import AramkitCrawler
 from aram_mayhem_helper.crawlers.ddragon.champion_crawler import ChampionCrawler
 from aram_mayhem_helper.crawlers.opgg.aram_augment_crawler import AramAugmentCrawler
 from aram_mayhem_helper.league_client_api.live_data import get_current_champion_name
 from aram_mayhem_helper.ocr.ocr_tool import get_ocr_tool
-from aram_mayhem_helper.utils.config import get_config
+from aram_mayhem_helper.utils.config import VALID_SOURCES, get_config, set_data_source
 from aram_mayhem_helper.utils.data import get_game_data
 from aram_mayhem_helper.utils.log_config import setup_logging
 
@@ -87,18 +88,27 @@ class TkinterLogHandler(logging.Handler):
 def recognize_augment(
     log_area: scrolledtext.ScrolledText,
     buttons: list[tk.Button],
+    source: str,
 ) -> None:
-    """识别符文和展示结果（后台线程执行，避免阻塞 Tkinter 主线程）"""
+    """识别符文和展示结果（后台线程执行，避免阻塞 Tkinter 主线程）。
+
+    使用 GUI 选择的数据源作为首选数据源。
+    """
     _run_in_background(
-        _recognize_worker,
+        lambda: _recognize_worker(source),
         "开始执行「识别符文」操作...",
         log_area,
         buttons,
     )
 
 
-def _recognize_worker() -> None:
-    """后台执行：识别当前英雄 → OCR 读取符文 → 生成推荐。"""
+def _recognize_worker(source: str) -> None:
+    """后台执行：识别当前英雄 → OCR 读取符文 → 生成推荐。
+
+    不变式：本函数内的数据源一律显式传入（available_source 的 preferred /
+    Suggest.source），不依赖 default_source() —— 写回配置后 GameData 持有的
+    旧配置引用已过期，默认源可能不是 GUI 当前选择。
+    """
     game_data = get_game_data()
 
     try:
@@ -110,12 +120,14 @@ def _recognize_worker() -> None:
         if not champion_id:
             logger.error(f"无法找到英雄 '{champion_name}' 对应的ID")
             return
-        source = game_data.available_source(champion_id)
-        if source is None:
-            logger.error(f"英雄ID {champion_id} ({champion_name}) 在 opgg/aramkit 数据源中都没有符文数据")
+        resolved = game_data.available_source(champion_id, preferred=source)
+        if resolved is None:
+            logger.error(f"英雄ID {champion_id} ({champion_name}) 在数据源 {source} 与另一源中都没有符文数据")
             return
-        suggest = Suggest(champion_id, game_data, source=source, thresholds=get_config().suggest)
-        logger.info(f"当前英雄：{champion_name}（数据源: {source}）")
+        if resolved != source:
+            logger.warning(f"数据源 {source} 无该英雄的符文数据，已回退使用 {resolved}")
+        suggest = Suggest(champion_id, game_data, source=resolved, thresholds=get_config().suggest)
+        logger.info(f"当前英雄：{champion_name}（数据源: {resolved}）")
     except Exception as e:
         logger.error(f"识别英雄出错：{str(e)}")
         return
@@ -278,23 +290,39 @@ def fetch_augment_data(
     crawl_buttons: list[tk.Button],
     start_page: int,
     end_page: int,
+    source: str,
 ) -> None:
-    """Fetch augment data from OP.GG in a background thread."""
+    """Fetch augment data from the selected source in a background thread.
+
+    aramkit 走完整爬取流程（版本发现 + 资源文件 + 批量英雄数据）；
+    opgg 走批量英雄数据抓取。
+    """
 
     def _crawl() -> None:
-        crawler = AramAugmentCrawler()
-        results = crawler.batch_crawl(start_page, end_page)
-        success = sum(1 for v in results.values() if v)
-        fail = sum(1 for v in results.values() if not v)
-        msg = f"符文数据抓取完成：成功 {success}" + (f"，失败 {fail}" if fail else "")
-        if fail:
-            logger.warning(msg)
+        if source == "aramkit":
+            try:
+                success = AramkitCrawler().crawl(start_page, end_page)
+            except RuntimeError as e:  # 版本发现失败（首页抓取失败且无本地缓存）
+                logger.error(f"aramkit 符文数据抓取失败：{e}")
+                return
+            if success:
+                logger.info("符文数据抓取完成（aramkit）：全部英雄成功")
+            else:
+                logger.warning("符文数据抓取完成（aramkit）：部分英雄失败")
         else:
-            logger.info(msg)
+            crawler = AramAugmentCrawler()
+            results = crawler.batch_crawl(start_page, end_page)
+            success_count = sum(1 for v in results.values() if v)
+            fail_count = sum(1 for v in results.values() if not v)
+            msg = f"符文数据抓取完成（opgg）：成功 {success_count}" + (f"，失败 {fail_count}" if fail_count else "")
+            if fail_count:
+                logger.warning(msg)
+            else:
+                logger.info(msg)
 
     _run_in_background(
         _crawl,
-        f"开始获取符文数据（页范围：{start_page}-{end_page}）...",
+        f"开始获取符文数据（数据源: {source}，页范围：{start_page}-{end_page}）...",
         log_area,
         crawl_buttons,
         on_done=_reload_data_after_crawl(log_area),
@@ -353,21 +381,48 @@ def create_gui() -> None:
     control_frame.grid_columnconfigure(0, weight=1)
     control_frame.grid_columnconfigure(1, weight=1)
 
+    # 顶部：数据源选择（跨两列），识别符文与数据抓取共用所选数据源
+    source_row = tk.Frame(control_frame)
+    source_row.grid(row=0, column=0, columnspan=2, padx=pad_sm, pady=(pad_sm, 0), sticky="ew")
+
+    tk.Label(source_row, text="数据源:", font=label_font).pack(side=tk.LEFT)
+    source_var = tk.StringVar(value=get_config().data_source.source)
+    source_combo = ttk.Combobox(
+        source_row,
+        textvariable=source_var,
+        values=VALID_SOURCES,
+        state="readonly",
+        width=10,
+    )
+    source_combo.pack(side=tk.LEFT, padx=(pad_xs, 0))
+
+    def _on_source_changed(_event: object) -> None:
+        """主线程回调：写回 config.toml 并重建配置单例；失败时回滚下拉框显示。"""
+        new_source = source_var.get()
+        try:
+            set_data_source(new_source)
+            print_log(f"数据源已切换并持久化: {new_source}", log_area)
+        except (ValueError, OSError) as e:
+            print_log(f"数据源切换失败: {e}（已恢复原设置）", log_area)
+            source_var.set(get_config().data_source.source)  # 失败时单例未重建，仍是旧值
+
+    source_combo.bind("<<ComboboxSelected>>", _on_source_changed)
+
     # Left group: game actions
     action_group = tk.LabelFrame(control_frame, text="游戏操作", font=label_font)
-    action_group.grid(row=0, column=0, padx=(0, pad_sm), pady=pad_sm, sticky="nsew")
+    action_group.grid(row=1, column=0, padx=(0, pad_sm), pady=pad_sm, sticky="nsew")
 
     btn2 = tk.Button(
         action_group,
         text="识别符文",
-        command=lambda: recognize_augment(log_area, all_buttons),
+        command=lambda: recognize_augment(log_area, all_buttons, source_var.get()),
         font=btn_font,
     )
     btn2.pack(fill=tk.X, padx=pad_sm, pady=pad_xs)
 
     # Right group: data crawling
     data_group = tk.LabelFrame(control_frame, text="数据抓取", font=label_font)
-    data_group.grid(row=0, column=1, padx=(pad_sm, 0), pady=pad_sm, sticky="nsew")
+    data_group.grid(row=1, column=1, padx=(pad_sm, 0), pady=pad_sm, sticky="nsew")
 
     btn3 = tk.Button(
         data_group,
@@ -409,7 +464,7 @@ def create_gui() -> None:
         except ValueError:
             print_log("页数格式错误，使用默认值（1-999）", log_area)
             start, end = 1, 999
-        fetch_augment_data(log_area, all_buttons, start, end)
+        fetch_augment_data(log_area, all_buttons, start, end, source_var.get())
 
     btn3.config(command=_on_fetch_champion)
     btn4.config(command=_on_fetch_augment)

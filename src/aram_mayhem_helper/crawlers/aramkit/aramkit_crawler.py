@@ -188,7 +188,8 @@ class AramkitCrawler(BaseCrawler):
         self.data_version = data_version
         self.fetch_resources(resources_version)
         results = self.batch_crawl(start_id, end_id)
-        return all(results.values())
+        # 空结果（如英雄数据尚未抓取）不算成功：all({}) 恒为 True 会误报
+        return bool(results) and all(results.values())
 
 
 if __name__ == "__main__":
