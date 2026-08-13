@@ -120,6 +120,11 @@ class AppConfig:
     def log_dir(self) -> Path:
         return self.project_root / "logs"
 
+    @property
+    def ocr_failure_dir(self) -> Path:
+        """OCR 识别失败（符文名称未匹配）时保存区域截图的目录。"""
+        return self.log_dir / "ocr_failures"
+
 
 # ── 加载器 ────────────────────────────────────────────────────────────────
 

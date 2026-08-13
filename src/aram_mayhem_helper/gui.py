@@ -102,6 +102,14 @@ def recognize_augment(
     )
 
 
+def _save_unrecognized_capture(index: int, text: str) -> None:
+    """符文名称识别失败时保存对应区域截图，便于后期排查 OCR 问题。
+
+    OCR 工具的 info 日志经 ``aram_mayhem_helper`` 根 logger 桥接到 GUI 日志区。
+    """
+    get_ocr_tool().save_failure_capture(index, text, get_config().ocr_failure_dir)
+
+
 def _recognize_worker(source: str) -> None:
     """后台执行：识别当前英雄 → OCR 读取符文 → 生成推荐。
 
@@ -135,7 +143,7 @@ def _recognize_worker(source: str) -> None:
     augments = None
     try:
         augments = get_ocr_tool().get_augments()
-        augments_info = suggest.suggest(augments)
+        augments_info = suggest.suggest(augments, on_unrecognized=_save_unrecognized_capture)
         if augments_info:
             for augment_info in augments_info:
                 logger.info(str(augment_info))

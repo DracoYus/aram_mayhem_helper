@@ -83,7 +83,7 @@ Layering: entry points (cli/gui/web) → algorithm → utils/crawlers. Dependenc
 4. `GameData.augment_entries()` loads that champion's augment stats (opgg reads `data` field; aramkit reads `augments.all` + `convert_augment_records`, both per-(champion, source) cached)
 5. `Suggest` runs `build_scored_groups()`: filters placeholders → groups by level → per group `add_unit_scale_attr` (min-max to [0,1]) + `add_bayesian_sigmoid_score_attr` (τ = median(pop>0) × tau_factor, weighted mean/std, sigmoid squash; `weighted_sum` + `performance_norm`/`popular_norm` percentiles)
 6. `OCRTool` screenshots 3 predefined screen regions (percentage-based) and runs PaddleOCR to read augment names
-7. `Suggest.suggest()` matches OCR results → augment IDs → returns recommendation strings ("快选"/"考虑"/"垃圾")
+7. `Suggest.suggest()` matches OCR results → augment IDs → returns recommendation strings ("快选"/"考虑"/"垃圾"); name-unmatched regions trigger `on_unrecognized` (CLI/GUI wire it to `OCRTool.save_failure_capture`, saving that region's crop to `logs/ocr_failures/` for troubleshooting)
 
 **Web flow:**
 

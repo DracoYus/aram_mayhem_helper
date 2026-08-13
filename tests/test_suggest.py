@@ -134,3 +134,24 @@ class TestSuggestMethods:
         s = _build_suggest(game_data)
         assert s.get_suggest_info([]) == []
         assert s.get_suggest_info([{"name": "X"}]) == []
+
+
+class TestSuggestOnUnrecognized:
+    def test_callback_fires_with_index_and_text_for_unmatched(self, game_data) -> None:
+        s = _build_suggest(game_data)
+        calls: list[tuple[int, str]] = []
+        results = s.suggest(
+            ["泰坦的坚决", "不存在符文", "另一个不存在"], on_unrecognized=lambda i, t: calls.append((i, t))
+        )
+        assert calls == [(1, "不存在符文"), (2, "另一个不存在")]  # 索引与输入位置一一对应
+        assert len(results) == 1  # 匹配的照常推荐
+
+    def test_callback_not_fired_when_all_matched(self, game_data) -> None:
+        s = _build_suggest(game_data)
+        calls: list[tuple[int, str]] = []
+        s.suggest(["泰坦的坚决", "尖端发明家"], on_unrecognized=lambda i, t: calls.append((i, t)))
+        assert calls == []
+
+    def test_default_none_keeps_behavior(self, game_data) -> None:
+        s = _build_suggest(game_data)
+        assert s.suggest(["完全不存在的符文"]) == []  # 默认参数路径不变

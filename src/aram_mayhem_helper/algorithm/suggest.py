@@ -1,6 +1,7 @@
 """符文推荐引擎：分组打分 + 阈值建议（"快选"/"考虑"/"垃圾"）。"""
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from aram_mayhem_helper.algorithm.pipeline import build_scored_groups
@@ -69,21 +70,30 @@ class Suggest:
                 return item
         return None
 
-    def suggest(self, augments: list[str]) -> list[str]:
+    def suggest(
+        self,
+        augments: list[str],
+        *,
+        on_unrecognized: Callable[[int, str], None] | None = None,
+    ) -> list[str]:
         """
         根据输入符文信息，给出操作推荐
 
         Args:
             augments (list[str]): 输入符文信息
+            on_unrecognized: 可选回调；符文名称无法匹配时以 (区域索引, OCR文本)
+                调用，便于调用方保存该区域识别画面用于后期排查
 
         Returns:
             list: 操作推荐
         """
         augment_info: list[dict[str, Any]] = []
-        for augment in augments:
+        for index, augment in enumerate(augments):
             augment_id = self.data.augment_id(augment, self.source)
             if not augment_id:
                 self.logger.warning(f"无法识别符文名称 '{augment}'，翻译文件中未找到匹配")
+                if on_unrecognized is not None:
+                    on_unrecognized(index, augment)
                 continue
             info = self.get_augment_info_by_id(augment_id)
             if not info:
