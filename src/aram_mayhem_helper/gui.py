@@ -69,12 +69,9 @@ class TkinterLogHandler(logging.Handler):
     def __init__(self, log_queue: queue.Queue[str | None]) -> None:
         super().__init__()
         self.log_queue = log_queue
-        self.setFormatter(
-            logging.Formatter(
-                "%(name)s - %(levelname)s - %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S",
-            )
-        )
+        # 只桥接消息本体：GUI 日志区的时间戳由 print_log 统一添加，
+        # 完整格式（时间/logger 名/级别/文件名:行号）由文件日志（log_config.py）保留
+        self.setFormatter(logging.Formatter("%(message)s"))
 
     def emit(self, record: logging.LogRecord) -> None:
         """Format *record* and push it into the queue."""
