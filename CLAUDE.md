@@ -56,7 +56,7 @@ src/aram_mayhem_helper/
 ├── league_client_api/
 │   └── live_data.py    # Reads current game state from League Client (localhost:2999)
 ├── ocr/
-│   └── ocr_tool.py     # PaddleOCR lazy-loaded; get_ocr_tool() singleton; region_to_pixel()
+│   └── ocr_tool.py     # PaddleOCR lazy-loaded; get_ocr_tool() singleton; region_to_pixel(); save_failure_capture(); debug_capture_dir (调试模式保存全部区域截图)
 ├── web/
 │   ├── app.py          # create_app(game_data=None) Flask factory + 3 routes
 │   ├── service.py      # i18n names, descriptions, build_champion_list/augments
@@ -99,7 +99,7 @@ Layering: entry points (cli/gui/web) → algorithm → utils/crawlers. Dependenc
 - **pipeline tolerances (intentional unification)**: single-item level groups (zero variance → `ValueError`/`ZeroDivisionError`) are logged and skipped, not raised; lookup-miss entries are dropped entirely (legacy Suggest kept them in `champion_augment_data`).
 - **OCR screen regions** are module constants `REGIONS` in `ocr/ocr_tool.py` as percentage tuples; `region_to_pixel()` converts. Update if the game UI changes.
 - **`Suggest.__init__`** takes `(champion_id, data: GameData, *, source, thresholds: SuggestConfig)` — thresholds are instance data, never read from config at import.
-- **`config.toml`** contains thresholds controlling recommendations (see README); dead `[team_analysis]` section was removed (feature never merged).
+- **`config.toml`** contains thresholds controlling recommendations and the `[ocr] debug_save_captures` debug switch (see README); dead `[team_analysis]` section was removed (feature never merged).
 - **Dependencies**: base = flask/numpy(<2.0)/requests; `[ocr]` extra = paddleocr/paddlepaddle/Pillow/screeninfo/setuptools. Web deploy installs the base package only.
 - **`data/augment_trans.json`** is the augment name↔ID↔level lookup table, manually maintained. aramkit shares Riot augment IDs; `data/aramkit/resources/{version}/augments.json` is a fallback for missing entries (`AramkitResources`, lazily loaded).
 - **Two data sources coexist independently**: OP.GG (`data/opgg/aram_augments/`) and aramkit (`data/aramkit/aram_augments/{dataset}/`). Default source from `[data_source] source`; the web UI switches via the top-bar dropdown / `?source=` param. Both sources are min-max scaled to [0,1] per level group before Bayesian-sigmoid scoring, so scores are directly comparable. aramkit `winRate`/`pickRate` are 0~1 decimals; OP.GG values are 0-100 — no field-level isomorphism.

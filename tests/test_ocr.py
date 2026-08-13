@@ -14,6 +14,7 @@ def _make_ocr() -> OCRTool:
     tool.use_angle_cls = False
     tool.logger = logging.getLogger("test_ocr")
     tool._last_captures = []
+    tool.debug_capture_dir = None
     return tool
 
 
@@ -105,6 +106,37 @@ class TestGetAugments:
         tool.get_augments()
         assert len(tool._last_captures) == 3
         assert all(isinstance(img, np.ndarray) for img in tool._last_captures)
+
+
+class TestDebugMode:
+    """调试模式（debug_capture_dir 非 None）：每次识别保存全部区域截图。"""
+
+    def test_saves_all_region_captures(self, tmp_path) -> None:
+        tool = _make_ocr()
+        tool._screen_size = (1920, 1080)
+        tool.debug_capture_dir = tmp_path
+        tool.capture_screen = lambda bbox: np.zeros((10, 10), dtype=np.uint8)  # type: ignore[method-assign]
+        tool.recognize_text = lambda img: [{"text": "x", "confidence": 1.0, "bbox": []}]  # type: ignore[method-assign]
+
+        tool.get_augments()
+
+        names = sorted(p.name for p in tmp_path.iterdir())
+        assert len(names) == 3
+        assert all("region0" in n for n in names[:1])  # 三个区域各一张
+        assert any("region0" in n for n in names)
+        assert any("region1" in n for n in names)
+        assert any("region2" in n for n in names)
+        assert all(p.suffix == ".png" for p in tmp_path.iterdir())
+
+    def test_disabled_saves_nothing(self, tmp_path) -> None:
+        tool = _make_ocr()
+        tool._screen_size = (1920, 1080)
+        tool.capture_screen = lambda bbox: np.zeros((10, 10), dtype=np.uint8)  # type: ignore[method-assign]
+        tool.recognize_text = lambda img: []  # type: ignore[method-assign]
+
+        tool.get_augments()
+
+        assert not tmp_path.exists() or not any(tmp_path.iterdir())
 
 
 class TestSaveFailureCapture:

@@ -67,6 +67,13 @@ class DataSourceConfig:
 
 
 @dataclass(frozen=True)
+class OcrConfig:
+    """OCR 工具配置（GUI / recommend 命令）。"""
+
+    debug_save_captures: bool = False  # 调试模式：每次识别把每个区域截图保存到日志目录
+
+
+@dataclass(frozen=True)
 class SuggestConfig:
     shrinkage_tau_factor: float = 0.5
     sigmoid_steepness: float = 1.0
@@ -83,6 +90,7 @@ class AppConfig:
     crawler: CrawlerConfig
     data_source: DataSourceConfig
     suggest: SuggestConfig
+    ocr: OcrConfig
     project_root: Path
     data_dir: Path
     config_path: Path
@@ -124,6 +132,11 @@ class AppConfig:
     def ocr_failure_dir(self) -> Path:
         """OCR 识别失败（符文名称未匹配）时保存区域截图的目录。"""
         return self.log_dir / "ocr_failures"
+
+    @property
+    def ocr_debug_dir(self) -> Path:
+        """OCR 调试模式（每次识别保存全部区域截图）的目录。"""
+        return self.log_dir / "ocr_debug"
 
 
 # ── 加载器 ────────────────────────────────────────────────────────────────
@@ -173,6 +186,7 @@ def load_config(*, config_path: Path | None = None, data_dir: Path | None = None
 
     crawler_raw = _as_section(raw, "crawler")
     suggest_raw = _as_section(raw, "suggest")
+    ocr_raw = _as_section(raw, "ocr")
 
     def suggest_float(old_key: str, new_key: str, default: float) -> float:
         # 正确拼写优先，旧拼写（precentage）回退兼容
@@ -232,6 +246,9 @@ def load_config(*, config_path: Path | None = None, data_dir: Path | None = None
             consider_select_percentage_threshold=suggest_float(
                 "consider_select_precentage_threshold", "consider_select_percentage_threshold", 0.30
             ),
+        ),
+        ocr=OcrConfig(
+            debug_save_captures=bool(_get(ocr_raw, "debug_save_captures", default=False)),
         ),
         project_root=_DEFAULT_REPO_ROOT,
         data_dir=data_dir,

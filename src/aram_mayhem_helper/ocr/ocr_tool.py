@@ -13,6 +13,7 @@ from typing import Any
 
 import numpy as np
 
+from aram_mayhem_helper.utils.config import get_config
 from aram_mayhem_helper.utils.retry import retry_on_exception
 
 # 失败截图文件名中 OCR 文本片段的长度上限
@@ -58,13 +59,22 @@ class OCRTool:
     支持截图、识别一体化操作，也可单独识别本地图片
     """
 
-    def __init__(self, lang: str = "ch", use_angle_cls: bool = False, use_gpu: bool = False, show_log: bool = False):
+    def __init__(
+        self,
+        lang: str = "ch",
+        use_angle_cls: bool = False,
+        use_gpu: bool = False,
+        show_log: bool = False,
+        debug_capture_dir: Path | None = None,
+    ):
         """
         初始化 OCR 工具（不加载模型，模型在首次识别时懒加载）
         :param lang: 识别语言，默认中英文混合("ch")，英文可设为"en"
         :param use_angle_cls: 是否启用方向分类（识别旋转文本）
         :param use_gpu: 是否使用 GPU 加速
         :param show_log: 是否显示 PaddleOCR 模型加载日志
+        :param debug_capture_dir: 调试模式目录；非 None 时每次识别把每个区域
+            的截图保存到此目录（排查 OCR 区域坐标），None 关闭
         """
         self.lang = lang
         self.use_angle_cls = use_angle_cls
@@ -75,6 +85,7 @@ class OCRTool:
         self._ocr_lock = threading.Lock()
         self._screen_size: tuple[int, int] | None = None
         self._last_captures: list[np.ndarray[Any, Any]] = []  # 最近一次 get_augments 各区域截图，供识别失败排查
+        self.debug_capture_dir = debug_capture_dir
 
     def _get_ocr(self) -> Any:
         """懒加载 PaddleOCR 模型实例（加锁防止预热与首次识别并发重复加载）。"""
@@ -168,6 +179,9 @@ class OCRTool:
     def get_augments(self) -> list[str]:
         """
         获取当前屏幕中的符文选项，并保留各区域截图（供识别失败时保存排查）
+
+        调试模式（debug_capture_dir 非 None）下额外把每个区域截图全部保存，
+        用于排查 OCR 区域坐标是否对准游戏界面。
         :return: 获取到的符文选项列表
         """
         width, height = self.screen_size
@@ -179,6 +193,12 @@ class OCRTool:
             results = self.recognize_text(image)
             text_list.append("".join(item["text"].strip() for item in results))
         self._last_captures = captures
+        if self.debug_capture_dir is not None:
+            saved = sum(
+                self._save_capture(index, text, self.debug_capture_dir) is not None
+                for index, text in enumerate(text_list)
+            )
+            self.logger.info(f"OCR 调试模式：已保存 {saved}/{len(text_list)} 张区域截图到 {self.debug_capture_dir}")
         self.logger.info(f"识别到符文选项: {text_list}")
         return text_list
 
@@ -197,8 +217,15 @@ class OCRTool:
         Returns:
             保存的 PNG 路径；索引无截图或保存失败时返回 None
         """
+        return self._save_capture(index, ocr_text, directory)
+
+    def _save_capture(self, index: int, ocr_text: str, directory: Path) -> Path | None:
+        """保存指定区域截图为 PNG（失败截图与调试模式共用的核心实现）。
+
+        保存失败不抛异常，仅记录日志，不影响调用主流程。
+        """
         if not (0 <= index < len(self._last_captures)):
-            self.logger.warning(f"无法保存识别失败截图：区域索引 {index} 无对应截图")
+            self.logger.warning(f"无法保存区域截图：区域索引 {index} 无对应截图")
             return None
         try:
             directory.mkdir(parents=True, exist_ok=True)
@@ -213,9 +240,9 @@ class OCRTool:
                 counter += 1
             Image.fromarray(self._last_captures[index]).save(path)
         except Exception:
-            self.logger.exception("保存识别失败截图失败")
+            self.logger.exception("保存区域截图失败")
             return None
-        self.logger.info(f"已保存识别失败截图: {path}")
+        self.logger.info(f"已保存区域截图: {path}")
         return path
 
 
@@ -223,8 +250,15 @@ _ocr_tool_singleton: OCRTool | None = None
 
 
 def get_ocr_tool() -> OCRTool:
-    """懒加载 OCR 工具单例（替代旧导入期初始化 PaddleOCR 模型的副作用）。"""
+    """懒加载 OCR 工具单例（替代旧导入期初始化 PaddleOCR 模型的副作用）。
+
+    调试模式开关（config [ocr].debug_save_captures）在单例首次构建时读取，
+    修改配置后需重启进程生效。
+    """
     global _ocr_tool_singleton
     if _ocr_tool_singleton is None:
-        _ocr_tool_singleton = OCRTool()
+        cfg = get_config()
+        _ocr_tool_singleton = OCRTool(
+            debug_capture_dir=cfg.ocr_debug_dir if cfg.ocr.debug_save_captures else None,
+        )
     return _ocr_tool_singleton

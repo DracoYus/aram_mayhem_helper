@@ -80,6 +80,9 @@ uv pip install -e .
 timeout = 30              # 请求超时时间（秒）
 delay_second = 2           # 爬取延迟（秒）
 
+[ocr]
+debug_save_captures = false  # 调试模式：每次识别保存全部区域截图到 logs/ocr_debug/（排查 OCR 区域坐标）
+
 [data_source]
 source = "aramkit"         # 默认数据源: "opgg" | "aramkit"
 
@@ -197,6 +200,10 @@ A: 可以调整以下参数：
 - 确保游戏窗口在前台且不被遮挡
 - 检查屏幕分辨率是否与配置匹配
 - 调整OCR识别区域的坐标（在 `ocr_tool.py` 中）
+
+排查区域坐标时，可将 `config/config.toml` 的 `[ocr] debug_save_captures` 改为
+`true` 打开调试模式：每次识别都会把三个区域的截图保存到 `logs/ocr_debug/`，
+对照截图即可确认截取位置是否对准游戏界面（排查完记得关闭）。
 
 识别失败时（OCR 文本无法匹配到符文 ID），对应区域截图会自动保存到
 `logs/ocr_failures/` 目录（文件名含区域索引与识别出的文本），可据此排查

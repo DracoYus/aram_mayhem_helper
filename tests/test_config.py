@@ -76,6 +76,12 @@ class TestLoadConfig:
         assert cfg.suggest.shrinkage_tau_factor == 0.5
         assert cfg.suggest.immediate_select_score_threshold == 0.70
         assert cfg.suggest.consider_select_score_threshold == 0.50
+        assert cfg.ocr.debug_save_captures is False  # [ocr] 段缺失时默认关闭
+
+    def test_ocr_debug_save_captures_parsed(self, tmp_path) -> None:
+        content = MINIMAL_TOML + "\n[ocr]\ndebug_save_captures = true\n"
+        cfg = load_config(config_path=_write_config(tmp_path, content))
+        assert cfg.ocr.debug_save_captures is True
 
     def test_data_dir_defaults_next_to_config(self, tmp_path) -> None:
         cfg = load_config(config_path=_write_config(tmp_path))
@@ -133,6 +139,8 @@ class TestLoadConfig:
         assert cfg.i18n_file == cfg.data_dir / "champions-names-i18n.json"
         assert cfg.augment_desc_file == cfg.data_dir / "aram-mayhem-augments.zh_cn.json"
         assert cfg.log_dir == cfg.project_root / "logs"
+        assert cfg.ocr_failure_dir == cfg.log_dir / "ocr_failures"
+        assert cfg.ocr_debug_dir == cfg.log_dir / "ocr_debug"
 
     def test_data_source_dataclass_shape(self) -> None:
         assert DataSourceConfig(source="opgg").source == "opgg"

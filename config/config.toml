@@ -27,6 +27,11 @@ resources_base_url = "https://data.aramkit.com/resources/"
 language = "zh-CN"
 save_directory = "aramkit/resources/"
 
+[ocr]
+# 调试模式：打开后每次识别都会把三个区域（符文槽位）的截图保存到 logs/ocr_debug/，
+# 用于排查 OCR 区域坐标是否对准游戏界面（配合 ocr_tool.py 的 REGIONS 调整）
+debug_save_captures = false
+
 [data_source]
 # 推荐引擎/GUI/网页默认数据源: "opgg" | "aramkit"
 source = "aramkit"
