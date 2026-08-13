@@ -93,10 +93,29 @@ class TestGetAugments:
         tool.recognize_text = lambda img: [{"text": "x", "confidence": 1.0, "bbox": []}]  # type: ignore[method-assign]
         assert tool.get_augments() == ["x", "x", "x"]
         assert captured == [
-            (460, 399, 748, 453),
-            (806, 399, 1094, 453),
-            (1171, 399, 1459, 453),
+            (455, 416, 743, 470),
+            (823, 416, 1111, 470),
+            (1192, 416, 1480, 470),
         ]
+
+    def test_keeps_only_first_recognized_line(self) -> None:
+        """区域内出现多行（如区域底部扫到卡片描述文字）时，只保留第一条名称行。"""
+        tool = _make_ocr()
+        tool._screen_size = (1920, 1080)
+        tool.capture_screen = lambda bbox: np.zeros((10, 10), dtype=np.uint8)  # type: ignore[method-assign]
+        calls = {"n": 0}
+
+        def fake_recognize(img) -> list[dict[str, object]]:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return [
+                    {"text": "珠光护手", "confidence": 1.0, "bbox": []},
+                    {"text": "对护盾造成额外伤害", "confidence": 0.5, "bbox": []},
+                ]
+            return [{"text": "软弹啪叽抓", "confidence": 1.0, "bbox": []}]
+
+        tool.recognize_text = fake_recognize  # type: ignore[method-assign]
+        assert tool.get_augments() == ["珠光护手", "软弹啪叽抓", "软弹啪叽抓"]
 
     def test_retains_captures_for_failure_saving(self) -> None:
         tool = _make_ocr()

@@ -33,9 +33,9 @@ def _safe_filename(text: str, max_length: int = _MAX_NAME_LENGTH) -> str:
 
 # 屏幕区域百分比坐标（left%, top%, right%, bottom%），对应游戏内三个符文槽位
 REGIONS: list[tuple[float, float, float, float]] = [
-    (0.24, 0.37, 0.39, 0.42),  # 第一个符文位置
-    (0.42, 0.37, 0.57, 0.42),  # 第二个符文位置
-    (0.61, 0.37, 0.76, 0.42),  # 第三个符文位置
+    (0.2373, 0.386, 0.3873, 0.436),  # 第一个符文位置
+    (0.4291, 0.386, 0.5791, 0.436),  # 第二个符文位置
+    (0.6210, 0.386, 0.7710, 0.436),  # 第三个符文位置
 ]
 
 
@@ -191,7 +191,9 @@ class OCRTool:
             image = self.capture_screen(region_to_pixel(region, width, height))
             captures.append(image)
             results = self.recognize_text(image)
-            text_list.append("".join(item["text"].strip() for item in results))
+            # 只取第一条（最上方）识别行：符文名称固定是区域内第一行文字；
+            # 区域底部即使扫到卡片描述文字，也不拼接污染名称（匹配为精确查表）
+            text_list.append(results[0]["text"].strip() if results else "")
         self._last_captures = captures
         if self.debug_capture_dir is not None:
             saved = sum(
