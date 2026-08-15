@@ -84,16 +84,16 @@ class TestSuggestMethods:
         s = _build_suggest(game_data)
         results = s.suggest(["泰坦的坚决", "尖端发明家", "不存在符文"])
         assert results == [
-            "考虑符文：泰坦的坚决，可以随掉，2/3，表现: 0.8616，流行度: 0.0",
-            "考虑符文：尖端发明家，暂时先别换，1/3，表现: 0.6845，流行度: 1.0",
+            "考虑符文：泰坦的坚决，2/3，表现: 0.8616，流行度: 0.0",
+            "考虑符文：尖端发明家，1/3，表现: 0.6845，流行度: 1.0",
         ]
 
     def test_suggest_recommendation_strings_aramkit(self, game_data) -> None:
         s = _build_suggest(game_data, source="aramkit")
         results = s.suggest(["泰坦的坚决", "尖端发明家"])
         assert results == [
-            "垃圾符文: 泰坦的坚决，别选，太垃圾了，3/3，表现: 0.0514，流行度: 0.5",
-            "考虑符文：尖端发明家，暂时先别换，2/3，表现: 0.5394，流行度: 1.0",
+            "垃圾符文: 泰坦的坚决，3/3，表现: 0.0514，流行度: 0.5",
+            "考虑符文：尖端发明家，2/3，表现: 0.5394，流行度: 1.0",
         ]
 
     def test_suggest_all_unknown_returns_empty(self, game_data) -> None:
@@ -119,14 +119,14 @@ class TestSuggestMethods:
         # rank ≤ 1 或 ws ≥ 0.70 → 快选
         assert msg(rank=1, ws=0.3).startswith("快选符文：")
         assert msg(rank=5, ws=0.75).startswith("快选符文：")
-        # rank ≤ 3 或 ws ≥ 0.50 → 考虑；单元素输入时该元素即组内最高 → "暂时先别换"
+        # rank ≤ 3 或 ws ≥ 0.50 → 考虑
         assert msg(rank=3, ws=0.3).startswith("考虑符文：")
-        assert "暂时先别换" in msg(rank=4, ws=0.5)
-        assert "暂时先别换" in msg(rank=4, ws=0.51)
-        # 组内存在更高 ws 时 → "可以随掉"
+        assert msg(rank=4, ws=0.5) == "考虑符文：X，4/10，表现: 0.5，流行度: 0.5"
+        assert msg(rank=4, ws=0.51) == "考虑符文：X，4/10，表现: 0.5，流行度: 0.5"
+        # 组内存在更高 ws 时仍为考虑
         top = {**base, "rank": 1, "weighted_sum": 0.9}
         below = {**base, "rank": 4, "weighted_sum": 0.51}
-        assert "可以随掉" in s.get_suggest_info([top, below])[1]
+        assert s.get_suggest_info([top, below])[1].startswith("考虑符文：")
         # 其余 → 垃圾
         assert msg(rank=9, ws=0.2).startswith("垃圾符文:")
 

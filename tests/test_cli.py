@@ -140,7 +140,7 @@ class TestRecommend:
                 calls.append((champion_id, source))
 
             def suggest(self, augments: list[str]) -> list[str]:
-                return ["快选符文：泰坦的坚决，别的不用看了"]
+                return ["快选符文：泰坦的坚决"]
 
         class _FakeOcr:
             def get_augments(self) -> list[str]:

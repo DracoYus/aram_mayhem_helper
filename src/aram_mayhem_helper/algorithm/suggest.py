@@ -129,7 +129,6 @@ class Suggest:
         t = self.thresholds
         immediate_select_rank_threshold = augments_num * t.immediate_select_percentage_threshold
         consider_select_rank_threshold = augments_num * t.consider_select_percentage_threshold
-        max_weighted_sum = max(item.get("weighted_sum", 0) for item in augments if item is not None)
         result: list[str] = []
         for augment in augments:
             if augment is None:
@@ -141,14 +140,11 @@ class Suggest:
             pop_norm = augment.get("popular_norm", "N/A")
             message = None
             if rank <= immediate_select_rank_threshold or ws >= t.immediate_select_score_threshold:
-                message = f"快选符文：{name}，别的不用看了"
+                message = f"快选符文：{name}"
             elif rank <= consider_select_rank_threshold or ws >= t.consider_select_score_threshold:
-                if max_weighted_sum == ws:
-                    message = f"考虑符文：{name}，暂时先别换"
-                else:
-                    message = f"考虑符文：{name}，可以随掉"
+                message = f"考虑符文：{name}"
             else:
-                message = f"垃圾符文: {name}，别选，太垃圾了"
+                message = f"垃圾符文: {name}"
             message += f"，{rank}/{augments_num}，表现: {perf_norm}，流行度: {pop_norm}"
             result.append(message)
 

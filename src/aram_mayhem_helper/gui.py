@@ -26,8 +26,8 @@ def print_log(log_text: str, log_area: scrolledtext.ScrolledText) -> None:
     :param log_text: 要打印的日志文本
     :param log_area: 日志显示区域对象
     """
-    # 拼接时间戳，格式：[2026-02-20 15:30:00] 日志内容
-    timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ", time.localtime())
+    # 拼接时间戳，格式：[15:30:00] 日志内容
+    timestamp = time.strftime("[%H:%M:%S] ", time.localtime())
     log_area.config(state=tk.NORMAL)  # 临时解锁日志区域，允许输入
     log_area.insert(tk.END, timestamp + log_text + "\n")  # 插入日志
     log_area.see(tk.END)  # 自动滚动到最新日志
