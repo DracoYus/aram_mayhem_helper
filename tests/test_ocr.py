@@ -117,6 +117,52 @@ class TestGetAugments:
         tool.recognize_text = fake_recognize  # type: ignore[method-assign]
         assert tool.get_augments() == ["珠光护手", "软弹啪叽抓", "软弹啪叽抓"]
 
+    def test_merges_same_line_boxes_split_at_punctuation(self) -> None:
+        """名称内全角标点（：/，）造成的字距断口会把同一行拆成多个文本框，需按 x 拼接。"""
+        tool = _make_ocr()
+        tool._screen_size = (1920, 1080)
+        tool.capture_screen = lambda bbox: np.zeros((10, 10), dtype=np.uint8)  # type: ignore[method-assign]
+
+        def fake_recognize(img) -> list[dict[str, object]]:
+            return [
+                # 两个框同一行（y 重叠），第二个框 x 靠右
+                {"text": "升级：", "confidence": 0.99, "bbox": [[176, 33], [292, 33], [292, 83], [176, 83]]},
+                {"text": "焚天", "confidence": 0.86, "bbox": [[300, 29], [398, 33], [396, 85], [298, 80]]},
+            ]
+
+        tool.recognize_text = fake_recognize  # type: ignore[method-assign]
+        assert tool.get_augments() == ["升级：焚天", "升级：焚天", "升级：焚天"]
+
+    def test_merges_boxes_in_left_to_right_order(self) -> None:
+        """文本框乱序返回时按 x 坐标排序后拼接，保证名称顺序正确。"""
+        tool = _make_ocr()
+        tool._screen_size = (1920, 1080)
+        tool.capture_screen = lambda bbox: np.zeros((10, 10), dtype=np.uint8)  # type: ignore[method-assign]
+
+        def fake_recognize(img) -> list[dict[str, object]]:
+            return [
+                {"text": "我的硬币！", "confidence": 0.99, "bbox": [[253, 35], [454, 35], [454, 80], [253, 80]]},
+                {"text": "哎哟，", "confidence": 0.95, "bbox": [[128, 30], [269, 34], [268, 84], [127, 79]]},
+            ]
+
+        tool.recognize_text = fake_recognize  # type: ignore[method-assign]
+        assert tool.get_augments() == ["哎哟，我的硬币！"] * 3
+
+    def test_lower_line_boxes_are_not_merged(self) -> None:
+        """下方另一行的文字（如卡片描述）即使存在也不混入名称。"""
+        tool = _make_ocr()
+        tool._screen_size = (1920, 1080)
+        tool.capture_screen = lambda bbox: np.zeros((10, 10), dtype=np.uint8)  # type: ignore[method-assign]
+
+        def fake_recognize(img) -> list[dict[str, object]]:
+            return [
+                {"text": "黎明使者的坚决", "confidence": 0.99, "bbox": [[138, 34], [440, 36], [440, 81], [138, 79]]},
+                {"text": "对低生命值敌人", "confidence": 0.9, "bbox": [[150, 95], [420, 95], [420, 120], [150, 120]]},
+            ]
+
+        tool.recognize_text = fake_recognize  # type: ignore[method-assign]
+        assert tool.get_augments() == ["黎明使者的坚决"] * 3
+
     def test_retains_captures_for_failure_saving(self) -> None:
         tool = _make_ocr()
         tool._screen_size = (1920, 1080)

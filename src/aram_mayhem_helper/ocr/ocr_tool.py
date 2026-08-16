@@ -176,6 +176,31 @@ class OCRTool:
         texts = [item["text"].strip() for item in results]
         return "".join(texts)
 
+    def _join_first_line(self, results: list[dict[str, Any]]) -> str:
+        """合并识别结果中第一行文字被拆分的文本框，返回该行完整文本。
+
+        符文名称中的全角标点（如 ``升级：中娅`` 的 ``：``、``哎哟，我的硬币！``
+        的 ``，``）会造成字距断口，PaddleOCR 会把同一行文字检测成多个文本框；
+        仅取第一个框会把名称截断为 ``升级：``，查表失败。以最上方文本框为锚，
+        纵向与之重叠的框视为同一行，按 x 排序后拼接；卡片描述文字在下方另一行，
+        纵向不重叠，不会混入名称。
+        """
+        boxes = [r for r in results if r.get("bbox")]
+        if not boxes:
+            # 无坐标信息时退回旧行为：只取第一个框
+            return results[0]["text"].strip() if results else ""
+        anchor = min(boxes, key=lambda r: min(p[1] for p in r["bbox"]))
+        anchor_top = min(p[1] for p in anchor["bbox"])
+        anchor_bottom = max(p[1] for p in anchor["bbox"])
+        line_boxes = [
+            r
+            for r in boxes
+            if min(p[1] for p in r["bbox"]) <= anchor_bottom
+            and max(p[1] for p in r["bbox"]) >= anchor_top
+        ]
+        line_boxes.sort(key=lambda r: min(p[0] for p in r["bbox"]))
+        return "".join(r["text"].strip() for r in line_boxes)
+
     def get_augments(self) -> list[str]:
         """
         获取当前屏幕中的符文选项，并保留各区域截图（供识别失败时保存排查）
@@ -191,9 +216,9 @@ class OCRTool:
             image = self.capture_screen(region_to_pixel(region, width, height))
             captures.append(image)
             results = self.recognize_text(image)
-            # 只取第一条（最上方）识别行：符文名称固定是区域内第一行文字；
-            # 区域底部即使扫到卡片描述文字，也不拼接污染名称（匹配为精确查表）
-            text_list.append(results[0]["text"].strip() if results else "")
+            # 合并第一行被标点断口拆开的文本框（如 "升级：中娅" → ["升级：", "中娅"]）；
+            # 描述文字在下方另一行，纵向不重叠，不会混入名称（匹配为精确查表）
+            text_list.append(self._join_first_line(results))
         self._last_captures = captures
         if self.debug_capture_dir is not None:
             saved = sum(
