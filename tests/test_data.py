@@ -97,28 +97,38 @@ class TestGameDataAvailableSource:
 
     def test_fallback_does_not_raise_on_corrupt_file(self, game_data, fixture_data_dir) -> None:
         # 默认源文件损坏时静默跳过，回退到另一源
-        (fixture_data_dir / "aramkit" / "aram_augments" / "all" / "103.json").write_text(
-            "{not json", encoding="utf-8"
-        )
+        (fixture_data_dir / "aramkit" / "aram_augments" / "all" / "103.json").write_text("{not json", encoding="utf-8")
         assert game_data.available_source("103", preferred="aramkit") == "opgg"
 
 
 class TestGameDataLookup:
-    def test_augment_info_translation_first(self, game_data) -> None:
-        assert game_data.augment_info("1001", "opgg") == {"name": "泰坦的坚决", "level": "2"}
+    """翻译查找：自动下载的 aramkit 资源优先，手动翻译表回退（与数据源无关）。"""
 
-    def test_augment_info_aramkit_fallback(self, game_data) -> None:
-        assert game_data.augment_info("7777", "aramkit") == {"name": "测试回退符文", "level": "1"}
-        assert game_data.augment_info("7777", "opgg") is None  # opgg 不回退
+    def test_augment_info_aramkit_first(self, game_data) -> None:
+        # 7777 仅在 aramkit 资源中：不依赖数据源，均可查到
+        assert game_data.augment_info("7777") == {"name": "测试回退符文", "level": "1"}
+
+    def test_augment_info_falls_back_to_translation(self, game_data) -> None:
+        # 1001 仅在手动翻译表中（aramkit 资源未收录）→ 回退
+        assert game_data.augment_info("1001") == {"name": "泰坦的坚决", "level": "2"}
 
     def test_augment_id_normalized_match(self, game_data) -> None:
-        assert game_data.augment_id("泰坦的 坚决", "opgg") == "1001"
-        assert game_data.augment_id("测试—符文", "opgg") == "3001"  # 连字符变体
-        assert game_data.augment_id("不存在符文", "opgg") is None
+        assert game_data.augment_id("泰坦的 坚决") == "1001"
+        assert game_data.augment_id("测试—符文") == "3001"  # 连字符变体
+        assert game_data.augment_id("不存在符文") is None
 
-    def test_augment_id_aramkit_fallback(self, game_data) -> None:
-        assert game_data.augment_id("测试回退符文", "aramkit") == "7777"
-        assert game_data.augment_id("测试回退符文", "opgg") is None
+    def test_augment_id_aramkit_normalized_match(self, game_data) -> None:
+        # aramkit 资源名称同样支持 OCR 容错归一化（空格差异）
+        assert game_data.augment_id("测试回退 符文") == "7777"
+
+    def test_aramkit_takes_precedence_over_translation(self, game_data, fixture_data_dir) -> None:
+        # 同一 ID 两源都有时，以 aramkit（自动更新）为准，手动表不覆盖
+        (fixture_data_dir / "aramkit" / "resources" / "16.0.1-abc123456789" / "augments.json").write_text(
+            json.dumps({"1001": {"name": "新版泰坦", "rarity": "prismatic"}}), encoding="utf-8"
+        )
+        game_data.reload()
+        assert game_data.augment_info("1001") == {"name": "新版泰坦", "level": "2"}
+        assert game_data.augment_id("新版泰坦") == "1001"
 
 
 class TestGameDataReload:
@@ -131,20 +141,20 @@ class TestGameDataReload:
         assert len(game_data.augment_entries("103", "opgg")) == 1
 
     def test_reload_refreshes_translation_table(self, game_data, fixture_data_dir) -> None:
-        assert game_data.augment_id("泰坦的坚决", "opgg") == "1001"
+        assert game_data.augment_id("泰坦的坚决") == "1001"
         (fixture_data_dir / "augment_trans.json").write_text(
             json.dumps({"1001": {"name": "泰坦的坚决", "level": "2"}}), encoding="utf-8"
         )
         game_data.reload()
-        assert game_data.augment_id("泰坦的坚决", "opgg") == "1001"
+        assert game_data.augment_id("泰坦的坚决") == "1001"
 
     def test_reload_refreshes_aramkit_resources(self, game_data, fixture_data_dir) -> None:
-        assert game_data.augment_info("7777", "aramkit") is not None
+        assert game_data.augment_info("7777") is not None
         (fixture_data_dir / "aramkit" / "resources" / "16.0.1-abc123456789" / "augments.json").write_text(
             json.dumps({}), encoding="utf-8"
         )
         game_data.reload()
-        assert game_data.augment_info("7777", "aramkit") is None
+        assert game_data.augment_info("7777") is None
 
 
 class TestAugmentLookup:

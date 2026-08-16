@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from aram_mayhem_helper.utils.text_normalization import normalize_text
+from aram_mayhem_helper.utils.text_normalization import normalize_for_lookup
 
 # aramkit rarity → 引擎 level（2=棱彩, 1=黄金, 0=白银）
 RARITY_TO_LEVEL = {"prismatic": "2", "gold": "1", "silver": "0"}
@@ -88,7 +88,8 @@ class AramkitResources:
                 level = RARITY_TO_LEVEL.get(str(info.get("rarity")), "0")
                 entry = {"name": name, "level": level}
                 self.augment_id_name_dict[aug_id] = entry
-                self.augment_name_id_dict[normalize_text(name)] = {"id": aug_id, "level": level}
+                # 与 AugmentLookup 同一套 OCR 容错归一化（空格/连字符差异）
+                self.augment_name_id_dict[normalize_for_lookup(name)] = {"id": aug_id, "level": level}
 
     def reload(self) -> None:
         """清空缓存，下次查询时重新读取。"""
@@ -101,9 +102,9 @@ class AramkitResources:
         return self.augment_id_name_dict.get(augment_id)
 
     def get_augment_id(self, augment_name: str) -> str | None:
-        """根据符文名称反查 ID（归一化后匹配），未找到时返回 None。"""
+        """根据符文名称反查 ID（OCR 容错归一化后匹配），未找到时返回 None。"""
         self._load()
-        normalized_name = normalize_text(augment_name)
+        normalized_name = normalize_for_lookup(augment_name)
         augment_info = self.augment_name_id_dict.get(normalized_name)
         if augment_info:
             return str(augment_info["id"])

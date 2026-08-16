@@ -77,8 +77,8 @@ class TestAramkitResources:
         resources = AramkitResources(fixture_data_dir / "aramkit" / "resources")
         assert resources.get_augment_info("7777") == {"name": "测试回退符文", "level": "1"}
         assert resources.get_augment_id("测试回退符文") == "7777"
-        # 特征锁定：资源回退仅做语义替换（normalize_text），不做空白容错
-        assert resources.get_augment_id("测试回退 符文") is None
+        # 特征锁定：与 AugmentLookup 同套 OCR 容错归一化（空格差异可匹配）
+        assert resources.get_augment_id("测试回退 符文") == "7777"
         assert resources.get_augment_info("9999") is None
         assert resources.get_augment_id("不存在符文") is None
 

@@ -91,7 +91,7 @@ def build_champion_augments(game_data: GameData, champion_id: str, source: str |
     config = get_config()
     build_scored_groups(
         entries,
-        lookup=lambda augment_id: game_data.augment_info(augment_id, source),
+        lookup=lambda augment_id: game_data.augment_info(augment_id),
         tau_factor=config.suggest.shrinkage_tau_factor,
         sigmoid_steepness=config.suggest.sigmoid_steepness,
         assign_rank=False,

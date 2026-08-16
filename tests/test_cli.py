@@ -128,9 +128,7 @@ class TestRecommend:
         monkeypatch.setattr(cli, "get_current_champion_name", boom)
         cli.recommend()  # 不应向上传播异常
 
-    def test_falls_back_to_opgg_when_aramkit_missing(
-        self, monkeypatch, game_data, app_config
-    ) -> None:
+    def test_falls_back_to_opgg_when_aramkit_missing(self, monkeypatch, game_data, app_config) -> None:
         """默认源(aramkit)缺数据时回退 opgg 并传给 Suggest（修复推荐硬中断）。"""
         calls: list[tuple[str, str | None]] = []
         captured_ocr: list[list[str]] = []
@@ -157,9 +155,7 @@ class TestRecommend:
         assert calls == [("22", "opgg")]
         assert captured_ocr == [["泰坦的坚决"]]
 
-    def test_no_data_in_either_source_returns_gracefully(
-        self, monkeypatch, game_data, app_config, caplog
-    ) -> None:
+    def test_no_data_in_either_source_returns_gracefully(self, monkeypatch, game_data, app_config, caplog) -> None:
         """266 在 opgg/aramkit 均无数据 → 记录错误并返回，不调用 Suggest/OCR。"""
         calls: list[tuple[str, str | None]] = []
 

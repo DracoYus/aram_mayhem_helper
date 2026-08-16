@@ -41,7 +41,7 @@ class Suggest:
         self.augment_group: dict[str, dict[str, Any]] = {}
         groups = build_scored_groups(
             entries,
-            lookup=lambda augment_id: data.augment_info(augment_id, self.source),
+            lookup=lambda augment_id: data.augment_info(augment_id),
             tau_factor=thresholds.shrinkage_tau_factor,
             sigmoid_steepness=thresholds.sigmoid_steepness,
             assign_rank=True,
@@ -89,7 +89,7 @@ class Suggest:
         """
         augment_info: list[dict[str, Any]] = []
         for index, augment in enumerate(augments):
-            augment_id = self.data.augment_id(augment, self.source)
+            augment_id = self.data.augment_id(augment)
             if not augment_id:
                 self.logger.warning(f"无法识别符文名称 '{augment}'，翻译文件中未找到匹配")
                 if on_unrecognized is not None:

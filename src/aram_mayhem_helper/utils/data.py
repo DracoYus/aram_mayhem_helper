@@ -229,20 +229,26 @@ class GameData:
             self._resources = AramkitResources(self._config.aramkit_resources_dir)
         return self._resources
 
-    def augment_info(self, augment_id: str, source: str | None = None) -> dict[str, Any] | None:
-        """根据数据源获取符文信息：翻译表优先，aramkit 缺失时回退其资源文件。"""
-        source = source or self.default_source()
-        info = self._lookup_impl().get_augment_info(augment_id)
-        if info is None and source == "aramkit":
-            info = self._resources_impl().get_augment_info(augment_id)
+    def augment_info(self, augment_id: str) -> dict[str, Any] | None:
+        """根据符文 ID 获取名称/等级信息：自动下载的 aramkit 资源优先，手动翻译表回退。
+
+        翻译映射与数据源无关（opgg/aramkit 条目共用同一 ID 命名空间）；
+        自动源跟随游戏版本更新，手动维护的 ``augment_trans.json`` 仅补齐
+        aramkit 未收录的条目。
+        """
+        info = self._resources_impl().get_augment_info(augment_id)
+        if info is None:
+            info = self._lookup_impl().get_augment_info(augment_id)
         return info
 
-    def augment_id(self, augment_name: str, source: str | None = None) -> str | None:
-        """根据数据源将符文名称反查为 ID：翻译表优先，aramkit 缺失时回退其资源文件。"""
-        source = source or self.default_source()
-        augment_id = self._lookup_impl().get_augment_id(augment_name)
-        if augment_id is None and source == "aramkit":
-            augment_id = self._resources_impl().get_augment_id(augment_name)
+    def augment_id(self, augment_name: str) -> str | None:
+        """将符文名称反查为 ID：自动下载的 aramkit 资源优先，手动翻译表回退。
+
+        两个来源均做 OCR 容错归一化（空格/连字符差异），匹配失败返回 None。
+        """
+        augment_id = self._resources_impl().get_augment_id(augment_name)
+        if augment_id is None:
+            augment_id = self._lookup_impl().get_augment_id(augment_name)
         return augment_id
 
     def default_source(self) -> str:
