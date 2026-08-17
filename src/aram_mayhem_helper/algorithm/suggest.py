@@ -39,6 +39,7 @@ class Suggest:
 
         self.champion_augment_data: list[dict[str, Any]] = []
         self.augment_group: dict[str, dict[str, Any]] = {}
+        self._by_id: dict[str, dict[str, Any]] = {}  # id → item（O(1) 反查索引）
         groups = build_scored_groups(
             entries,
             lookup=lambda augment_id: data.augment_info(augment_id),
@@ -51,6 +52,9 @@ class Suggest:
         for level, items in groups:
             self.augment_group[level] = {"augments": items, "number": len(items)}
             self.champion_augment_data.extend(items)
+            for item in items:
+                # id 归一化到 str，与原 get_augment_info_by_id 的 str(item_id) 比较语义一致
+                self._by_id[str(item["id"])] = item
 
     def get_augment_info_by_id(self, augment_id: str) -> dict[str, Any] | None:
         """
@@ -64,11 +68,7 @@ class Suggest:
         """
         if not augment_id:
             return None
-        for item in self.champion_augment_data:
-            item_id = item.get("id")
-            if item_id is not None and str(item_id) == augment_id:
-                return item
-        return None
+        return self._by_id.get(augment_id)
 
     def suggest(
         self,
