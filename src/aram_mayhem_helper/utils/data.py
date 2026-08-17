@@ -97,6 +97,8 @@ class GameData:
         self.logger = logging.getLogger(__name__)
         self._config = config
         self._champion_data: dict[str, dict[str, Any]] | None = None
+        self._champion_name_by_key: dict[str, str] | None = None  # key → 名称
+        self._champion_key_by_name: dict[str, str] | None = None  # lower(name) → key
         self._entries_cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
         self._lookup: AugmentLookup | None = None
         self._resources: AramkitResources | None = None
@@ -105,23 +107,36 @@ class GameData:
 
     def _champions(self) -> dict[str, dict[str, Any]]:
         if self._champion_data is None:
-            path = self._config.champion_dir
-            if not path.exists():
-                self._champion_data = {}
-                return self._champion_data
+            self._load_champions()
+        assert self._champion_data is not None
+        return self._champion_data
+
+    def _load_champions(self) -> None:
+        """加载英雄元数据并构建 key↔name 查找索引（一次性，供后续 O(1) 反查）。"""
+        path = self._config.champion_dir
+        if not path.exists():
+            self._champion_data = {}
+        else:
             files = [f for f in path.iterdir() if f.is_file()]
             if not files:
                 self.logger.error(f"没有找到任何英雄数据文件在: {path}")
                 self._champion_data = {}
-                return self._champion_data
-            latest_file = max(files, key=lambda f: f.name)
-            try:
-                with open(latest_file, "r", encoding="utf-8") as f:
-                    self._champion_data = json.load(f)["data"]
-            except Exception as e:
-                self.logger.error(f"读取英雄ID时发生错误: {str(e)}")
-                self._champion_data = {}
-        return self._champion_data
+            else:
+                latest_file = max(files, key=lambda f: f.name)
+                try:
+                    with open(latest_file, "r", encoding="utf-8") as f:
+                        self._champion_data = json.load(f)["data"]
+                except Exception as e:
+                    self.logger.error(f"读取英雄ID时发生错误: {str(e)}")
+                    self._champion_data = {}
+        self._champion_name_by_key = {}
+        self._champion_key_by_name = {}
+        for champ_info in self._champion_data.values():
+            # key→name 用显示名 name；name→key 用内部标识 id（与原按 id 匹配的语义一致，
+            # Data Dragon 部分英雄 id 与 name 不同，如 "Chogath" vs "Cho'Gath"），
+            # 两者都映射到数字 key
+            self._champion_name_by_key[str(champ_info["key"])] = str(champ_info["name"])
+            self._champion_key_by_name[str(champ_info["id"]).lower()] = str(champ_info["key"])
 
     def champion_ids(self) -> list[str]:
         """全部英雄 ID（按整数升序）。"""
@@ -129,19 +144,23 @@ class GameData:
 
     def champion_id_by_name(self, champion_name: str) -> str | None:
         """根据英雄名称获取英雄 ID（不区分大小写）。"""
-        for champ_id, champ_info in self._champions().items():
-            if champ_info["id"].lower() == champion_name.lower():
-                return str(champ_info["key"])
-        self.logger.warning(f"未找到英雄名称 '{champion_name}' 对应的 ID")
-        return None
+        _ = self._champions()  # 确保索引已构建
+        assert self._champion_key_by_name is not None
+        champ_id = self._champion_key_by_name.get(champion_name.lower())
+        if champ_id is None:
+            self.logger.warning(f"未找到英雄名称 '{champion_name}' 对应的 ID")
+        return champ_id
 
     def champion_name(self, champion_id: str) -> str | None:
         """根据英雄 ID（key）获取英雄名称。"""
-        for champ_info in self._champions().values():
-            if champ_info["key"] == champion_id:
-                return str(champ_info["name"])
-        self.logger.warning(f"未找到英雄 ID '{champion_id}' 对应的名称")
-        return None
+        _ = self._champions()  # 确保索引已构建
+        assert self._champion_name_by_key is not None
+        name = self._champion_name_by_key.get(
+            champion_id if isinstance(champion_id, str) else str(champion_id)
+        )
+        if name is None:
+            self.logger.warning(f"未找到英雄 ID '{champion_id}' 对应的名称")
+        return name
 
     # ── 符文条目 ────────────────────────────────────────────────────────
 
