@@ -155,9 +155,7 @@ class GameData:
         """根据英雄 ID（key）获取英雄名称。"""
         _ = self._champions()  # 确保索引已构建
         assert self._champion_name_by_key is not None
-        name = self._champion_name_by_key.get(
-            champion_id if isinstance(champion_id, str) else str(champion_id)
-        )
+        name = self._champion_name_by_key.get(champion_id if isinstance(champion_id, str) else str(champion_id))
         if name is None:
             self.logger.warning(f"未找到英雄 ID '{champion_id}' 对应的名称")
         return name
