@@ -195,8 +195,7 @@ class OCRTool:
         line_boxes = [
             r
             for r in boxes
-            if min(p[1] for p in r["bbox"]) <= anchor_bottom
-            and max(p[1] for p in r["bbox"]) >= anchor_top
+            if min(p[1] for p in r["bbox"]) <= anchor_bottom and max(p[1] for p in r["bbox"]) >= anchor_top
         ]
         line_boxes.sort(key=lambda r: min(p[0] for p in r["bbox"]))
         return "".join(r["text"].strip() for r in line_boxes)
@@ -271,6 +270,16 @@ class OCRTool:
             return None
         self.logger.info(f"已保存区域截图: {path}")
         return path
+
+
+def save_unrecognized_capture(index: int, text: str) -> None:
+    """符文名称识别失败时保存对应区域截图（CLI 与 GUI 共用的排查入口）。
+
+    由识别失败（符文名称未匹配）的调用方在 ``get_augments`` 之后调用；
+    ``index`` 与 REGIONS 中区域一一对应，截图保存到 ``ocr_failure_dir``。
+    保存失败不抛异常，仅记录日志，不影响推荐主流程。
+    """
+    get_ocr_tool().save_failure_capture(index, text, get_config().ocr_failure_dir)
 
 
 _ocr_tool_singleton: OCRTool | None = None

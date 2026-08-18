@@ -13,7 +13,7 @@ from aram_mayhem_helper.crawlers.aramkit.aramkit_crawler import AramkitCrawler
 from aram_mayhem_helper.crawlers.ddragon.champion_crawler import ChampionCrawler
 from aram_mayhem_helper.crawlers.opgg.aram_augment_crawler import AramAugmentCrawler
 from aram_mayhem_helper.league_client_api.live_data import get_current_champion_name
-from aram_mayhem_helper.ocr.ocr_tool import get_ocr_tool
+from aram_mayhem_helper.ocr.ocr_tool import get_ocr_tool, save_unrecognized_capture
 from aram_mayhem_helper.utils.config import VALID_SOURCES, get_config, set_data_source
 from aram_mayhem_helper.utils.data import get_game_data
 from aram_mayhem_helper.utils.log_config import setup_logging
@@ -99,14 +99,6 @@ def recognize_augment(
     )
 
 
-def _save_unrecognized_capture(index: int, text: str) -> None:
-    """符文名称识别失败时保存对应区域截图，便于后期排查 OCR 问题。
-
-    OCR 工具的 info 日志经 ``aram_mayhem_helper`` 根 logger 桥接到 GUI 日志区。
-    """
-    get_ocr_tool().save_failure_capture(index, text, get_config().ocr_failure_dir)
-
-
 def _recognize_worker(source: str) -> None:
     """后台执行：识别当前英雄 → OCR 读取符文 → 生成推荐。
 
@@ -140,7 +132,7 @@ def _recognize_worker(source: str) -> None:
     augments = None
     try:
         augments = get_ocr_tool().get_augments()
-        augments_info = suggest.suggest(augments, on_unrecognized=_save_unrecognized_capture)
+        augments_info = suggest.suggest(augments, on_unrecognized=save_unrecognized_capture)
         if augments_info:
             for augment_info in augments_info:
                 logger.info(str(augment_info))
