@@ -122,22 +122,26 @@ class Suggest:
         if first is None:
             self.logger.warning("符文信息列表首元素为 None，无法生成建议")
             return []
-        augments_num = first.get("group_size")
-        if augments_num is None:
+        # group_size 作为「列表是否有组大小」的整体守卫（缺失即无法生成建议）；
+        # 但每个匹配项可能来自不同等级（稀有度）组、各有自己的 group_size，
+        # 判断与显示都应用该项自己的组大小，不能用第一项的当所有项的分母。
+        fallback_group_size = first.get("group_size")
+        if fallback_group_size is None:
             self.logger.warning("符文数据缺少 'group_size' 字段，无法生成建议")
             return []
         t = self.thresholds
-        immediate_select_rank_threshold = augments_num * t.immediate_select_percentage_threshold
-        consider_select_rank_threshold = augments_num * t.consider_select_percentage_threshold
         result: list[str] = []
         for augment in augments:
             if augment is None:
                 continue
             name = augment.get("name", "未知")
-            rank = augment.get("rank", augments_num)
+            group_size = augment.get("group_size") or fallback_group_size
+            rank = augment.get("rank", group_size)
             ws = augment.get("weighted_sum", 0)
             perf_norm = augment.get("performance_norm", "N/A")
             pop_norm = augment.get("popular_norm", "N/A")
+            immediate_select_rank_threshold = group_size * t.immediate_select_percentage_threshold
+            consider_select_rank_threshold = group_size * t.consider_select_percentage_threshold
             message = None
             if rank <= immediate_select_rank_threshold or ws >= t.immediate_select_score_threshold:
                 message = f"快选符文：{name}"
@@ -145,7 +149,7 @@ class Suggest:
                 message = f"考虑符文：{name}"
             else:
                 message = f"垃圾符文: {name}"
-            message += f"，{rank}/{augments_num}，表现: {perf_norm}，流行度: {pop_norm}"
+            message += f"，{rank}/{group_size}，表现: {perf_norm}，流行度: {pop_norm}"
             result.append(message)
 
         return result

@@ -91,9 +91,11 @@ class TestSuggestMethods:
     def test_suggest_recommendation_strings_aramkit(self, game_data) -> None:
         s = _build_suggest(game_data, source="aramkit")
         results = s.suggest(["泰坦的坚决", "尖端发明家"])
+        # 两个匹配项分属不同等级组：泰坦的坚决(组2, size=3) 与 尖端发明家(组1, size=4)；
+        # 各用各自的 group_size 作为分母（修复前错误地共用第一项的 3）
         assert results == [
             "垃圾符文: 泰坦的坚决，3/3，表现: 0.0514，流行度: 0.5",
-            "考虑符文：尖端发明家，2/3，表现: 0.5394，流行度: 1.0",
+            "考虑符文：尖端发明家，2/4，表现: 0.5394，流行度: 1.0",
         ]
 
     def test_suggest_all_unknown_returns_empty(self, game_data) -> None:
@@ -129,6 +131,33 @@ class TestSuggestMethods:
         assert s.get_suggest_info([top, below])[1].startswith("考虑符文：")
         # 其余 → 垃圾
         assert msg(rank=9, ws=0.2).startswith("垃圾符文:")
+
+    def test_get_suggest_info_uses_each_items_own_group_size(self, game_data) -> None:
+        # 一次识别跨多个等级组（不同稀有度）时，各 item 的 group_size 不同；
+        # 不能拿第一项的组大小当所有项的分母（否则 rank/group_size 与阈值算错）。
+        s = _build_suggest(game_data)
+        t = get_config().suggest
+        # 小组成员：group_size=5 → 快选阈值 5*0.10=0.5，rank=1 不满足 → 仅考虑
+        # 大组成员：group_size=10 → 快选阈值 10*0.10=1.0，rank=1 满足 → 快选
+        small = {
+            "name": "小组成员",
+            "group_size": 5,
+            "rank": 1,
+            "weighted_sum": t.consider_select_score_threshold - 0.01,
+            "performance_norm": 0.5,
+            "popular_norm": 0.5,
+        }
+        larger = {
+            "name": "大组成员",
+            "group_size": 10,
+            "rank": 1,
+            "weighted_sum": t.consider_select_score_threshold - 0.01,
+            "performance_norm": 0.6,
+            "popular_norm": 0.6,
+        }
+        results = s.get_suggest_info([small, larger])
+        assert results[0] == "考虑符文：小组成员，1/5，表现: 0.5，流行度: 0.5"
+        assert results[1] == "快选符文：大组成员，1/10，表现: 0.6，流行度: 0.6"
 
     def test_get_suggest_info_empty_and_missing_group_size(self, game_data) -> None:
         s = _build_suggest(game_data)
