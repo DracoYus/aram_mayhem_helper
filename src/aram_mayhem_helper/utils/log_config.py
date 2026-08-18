@@ -1,7 +1,7 @@
 import logging
 import sys
 
-from aram_mayhem_helper.utils.config import config
+from aram_mayhem_helper.utils.config import get_config
 
 
 def setup_logging(
@@ -35,7 +35,7 @@ def setup_logging(
     root_logger.addHandler(console_handler)
 
     # 4. 配置文件 Handler（输出 DEBUG 及以上，保存到 logs 目录）
-    log_dir = config.base_dir / "logs"
+    log_dir = get_config().log_dir
     log_dir.mkdir(exist_ok=True)  # 自动创建 logs 目录
     file_handler = logging.FileHandler(log_dir / log_file, encoding="utf-8")
     file_handler.setLevel(file_level)

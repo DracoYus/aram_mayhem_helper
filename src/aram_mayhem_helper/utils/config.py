@@ -356,28 +356,3 @@ def set_data_source(source: str) -> AppConfig:
     # 重建单例时沿用旧 data_dir，保留 env/参数注入的 data_dir 语义
     _config_singleton = load_config(config_path=current.config_path, data_dir=current.data_dir)
     return _config_singleton
-
-
-# ── 旧调用方兼容层（Phase 3/4 迁移完成后移除）─────────────────────────────
-
-
-class Config:
-    """兼容旧调用方的委托类：保持嵌套 get() 与可变 data_path 行为。"""
-
-    def __init__(self) -> None:
-        app = get_config()
-        self.base_dir: Path = app.project_root
-        self.config_path: Path = app.config_path
-        self.data_path: Path = app.data_dir
-        self._app_config: AppConfig = app
-
-    def get(self, *keys: str, default: Any = None) -> Any:
-        """嵌套读取原始 TOML（``config.get("suggest", "immediate_select_score_threshold")``）。"""
-        return _get(self._app_config.raw, *keys, default=default)
-
-    @property
-    def data(self) -> dict[str, Any]:
-        return self._app_config.raw
-
-
-config = Config()

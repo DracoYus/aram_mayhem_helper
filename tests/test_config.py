@@ -151,23 +151,6 @@ class TestGetConfig:
         assert get_config() is get_config()
         assert get_config().config_path.exists()
 
-    def test_legacy_config_delegates_to_singleton(self) -> None:
-        from aram_mayhem_helper.utils.config import config
-
-        app = get_config()
-        assert config.data_path == app.data_dir
-        assert config.get("crawler", "timeout") == app.crawler.timeout
-        assert config.get("suggest", "shrinkage_tau_factor") == app.suggest.shrinkage_tau_factor
-        assert config.get("data_source", "source") == app.data_source.source
-        assert config.get("missing", "key", default="dflt") == "dflt"
-
-    def test_legacy_data_path_stays_writable(self, tmp_path, monkeypatch) -> None:
-        # 旧调用方与测试依赖可变 data_path
-        from aram_mayhem_helper.utils.config import config
-
-        monkeypatch.setattr(config, "data_path", tmp_path / "data")
-        assert config.data_path == tmp_path / "data"
-
 
 @pytest.fixture
 def patched_singleton(tmp_path, monkeypatch) -> AppConfig:
