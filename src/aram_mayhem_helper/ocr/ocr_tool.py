@@ -7,6 +7,7 @@ PaddleOCR/PIL/screeninfo 均在方法内懒导入：模块导入本身不加载�
 import logging
 import re
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,31 @@ def region_to_pixel(
     )
 
 
+def _perf_logger() -> logging.Logger:
+    """返回只写日志文件的性能计时 logger（不传播到 GUI 日志区）。
+
+    主日志经根 logger ``aram_mayhem_helper`` 输出到文件和控制台，GUI 的
+    TkinterLogHandler 也挂在该根 logger 上——因此根 logger 下任何级别的日志
+    都会进入 GUI 日志区。为避免计时噪音刷屏 GUI，这里独建一个
+    propagate=False 的 logger 并自挂 FileHandler，复用同一个 ``logs/app.log``
+    文件，只进文件不进 GUI。
+    """
+    logger = logging.getLogger("aram_mayhem_helper.perf")
+    if not logger.handlers:
+        logger.setLevel(logging.DEBUG)
+        logger.propagate = False
+        path = get_config().log_dir / "app.log"
+        handler = logging.FileHandler(path, encoding="utf-8")
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
+        logger.addHandler(handler)
+    return logger
+
+
 class OCRTool:
     """
     屏幕指定区域 OCR 识别工具类
@@ -90,6 +116,7 @@ class OCRTool:
     def _get_ocr(self) -> Any:
         """懒加载 PaddleOCR 模型实例（加锁防止预热与首次识别并发重复加载）。"""
         if self._ocr is None:
+            _lock_start = time.perf_counter()
             with self._ocr_lock:
                 if self._ocr is None:
                     from paddleocr import PaddleOCR
@@ -103,6 +130,12 @@ class OCRTool:
                         det_db_box_thresh=0.3,
                         det_db_unclip_ratio=2.0,
                         det_db_score_mode="fast",  # 加快检测速度，不影响合并
+                    )
+                    _perf_logger().debug(f"本线程构建 PaddleOCR 模型耗时: {time.perf_counter() - _lock_start:.3f}s")
+                else:
+                    # 拿到锁后发现模型已被暖机线程构建好 → 说明首次识别在等锁
+                    _perf_logger().debug(
+                        f"首识别等待暖机线程构建模型（锁等待）耗时: {time.perf_counter() - _lock_start:.3f}s"
                     )
         return self._ocr
 
@@ -208,16 +241,27 @@ class OCRTool:
         用于排查 OCR 区域坐标是否对准游戏界面。
         :return: 获取到的符文选项列表
         """
+        _total_start = time.perf_counter()
         width, height = self.screen_size
         captures: list[np.ndarray[Any, Any]] = []
         text_list: list[str] = []
-        for region in REGIONS:
+        for idx, region in enumerate(REGIONS):
+            _cap_start = time.perf_counter()
             image = self.capture_screen(region_to_pixel(region, width, height))
+            _cap_end = time.perf_counter()
             captures.append(image)
+
+            _rec_start = time.perf_counter()
             results = self.recognize_text(image)
+            _rec_end = time.perf_counter()
             # 合并第一行被标点断口拆开的文本框（如 "升级：中娅" → ["升级：", "中娅"]）；
             # 描述文字在下方另一行，纵向不重叠，不会混入名称（匹配为精确查表）
             text_list.append(self._join_first_line(results))
+
+            _perf_logger().debug(
+                f"区域{idx} 截图{_cap_end - _cap_start:.3f}s | 识别{_rec_end - _rec_start:.3f}s "
+                f"(累计 {_rec_end - _total_start:.3f}s)"
+            )
         self._last_captures = captures
         if self.debug_capture_dir is not None:
             saved = sum(
@@ -225,6 +269,7 @@ class OCRTool:
                 for index, text in enumerate(text_list)
             )
             self.logger.info(f"OCR 调试模式：已保存 {saved}/{len(text_list)} 张区域截图到 {self.debug_capture_dir}")
+        _perf_logger().debug(f"get_augments 总耗时: {time.perf_counter() - _total_start:.3f}s | 识别到 {text_list}")
         self.logger.info(f"识别到符文选项: {text_list}")
         return text_list
 
