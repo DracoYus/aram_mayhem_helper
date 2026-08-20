@@ -79,19 +79,34 @@ class TestFetchJson:
         crawler.session = FakeSession(responses={"http://x": FakeResponse(payload={}, json_error=True)})
         assert crawler.fetch_json("http://x") is None
 
-    def test_http_error_returns_none(self, crawler_env, monkeypatch) -> None:
+    def test_http_error_retries_before_returning_none(self, crawler_env, monkeypatch) -> None:
         crawler = _make_opgg_crawler(crawler_env, monkeypatch)
-        crawler.session = FakeSession(responses={"http://x": FakeResponse(payload={}, error=requests.HTTPError("404"))})
-        assert crawler.fetch_json("http://x") is None
+        session = FakeSession(responses={"http://x": FakeResponse(payload={}, error=requests.HTTPError("404"))})
+        crawler.session = session
 
-    def test_request_exception_is_swallowed_inside(self, crawler_env, monkeypatch) -> None:
-        # 特征锁定：fetch_json 内部捕获异常返回 None，重试装饰器因此不生效（仅 1 次调用）
+        assert crawler.fetch_json("http://x") is None
+        assert len(session.calls) == 4
+
+    def test_request_exception_retries_until_success(self, crawler_env, monkeypatch) -> None:
         crawler = _make_opgg_crawler(crawler_env, monkeypatch)
         session = FakeSession()
-        session.default = FakeResponse(payload={}, error=requests.ConnectionError("down"))
+        responses = iter(
+            [
+                FakeResponse(error=requests.ConnectionError("down")),
+                FakeResponse(error=requests.Timeout("slow")),
+                FakeResponse(payload={"ok": 1}),
+            ]
+        )
+
+        def get(url: str, **kwargs):
+            session.calls.append((url, kwargs))
+            return next(responses)
+
+        monkeypatch.setattr(session, "get", get)
         crawler.session = session
-        assert crawler.fetch_json("http://x") is None
-        assert len(session.calls) == 1
+
+        assert crawler.fetch_json("http://x") == {"ok": 1}
+        assert len(session.calls) == 3
 
 
 class TestSaveToFile:
@@ -136,6 +151,15 @@ class TestBatchCrawl:
 
 
 class TestAramkitCrawler:
+    def test_fetch_text_retries_before_returning_none(self, crawler_env, monkeypatch) -> None:
+        crawler = AramkitCrawler(config=crawler_env)
+        monkeypatch.setattr(time, "sleep", lambda s: None)
+        session = FakeSession(default=FakeResponse(error=requests.ConnectionError("down")))
+        crawler.session = session
+
+        assert crawler.fetch_text("http://x") is None
+        assert len(session.calls) == 4
+
     def _make(self, crawler_env, monkeypatch) -> AramkitCrawler:
         crawler = AramkitCrawler(config=crawler_env)
         monkeypatch.setattr(time, "sleep", lambda s: None)

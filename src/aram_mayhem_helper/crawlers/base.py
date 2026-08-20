@@ -41,11 +41,16 @@ class BaseCrawler:
         self.logger = logging.getLogger(__name__)
 
     @retry_on_exception(max_retries=3, delay=1.0, backoff_factor=2.0, exceptions=(requests.RequestException,))
+    def _request(self, url: str, params: dict[str, Any] | None = None) -> requests.Response:
+        """发送 HTTP 请求；请求异常交由重试装饰器处理。"""
+        response = self.session.get(url, params=params, timeout=self.timeout)
+        response.raise_for_status()
+        return response
+
     def fetch_json(self, url: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
         """从指定 URL 获取 JSON 数据，失败返回 None。"""
         try:
-            response = self.session.get(url, params=params, timeout=self.timeout)
-            response.raise_for_status()  # 检查 HTTP 错误
+            response = self._request(url, params)
             data: dict[str, Any] = response.json()
             self.logger.info(f"成功从 {url} 获取JSON数据")
             return data

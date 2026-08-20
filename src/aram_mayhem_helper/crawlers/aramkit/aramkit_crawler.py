@@ -10,13 +10,10 @@ import re
 import time
 from pathlib import Path
 
-import requests
-
 from aram_mayhem_helper.crawlers.base import BaseCrawler
 from aram_mayhem_helper.utils.aramkit import version_sort_key
 from aram_mayhem_helper.utils.config import AppConfig, get_config
 from aram_mayhem_helper.utils.data import get_game_data
-from aram_mayhem_helper.utils.retry import retry_on_exception
 
 # 数据版本: 16.15-20260805-7e30d3443ba1（游戏版本-日期-哈希）
 DATA_VERSION_RE = re.compile(r"16\.\d+-\d{8}-[a-f0-9]{12}")
@@ -51,7 +48,6 @@ class AramkitCrawler(BaseCrawler):
         self.resources_directory.mkdir(parents=True, exist_ok=True)
         self.logger = logging.getLogger(__name__)
 
-    @retry_on_exception(max_retries=3, delay=1.0, backoff_factor=2.0, exceptions=(requests.RequestException,))
     def fetch_text(self, url: str) -> str | None:
         """
         从指定URL获取文本内容（用于版本发现首页 HTML）
@@ -63,8 +59,7 @@ class AramkitCrawler(BaseCrawler):
             文本内容，如果失败则返回None
         """
         try:
-            response = self.session.get(url, timeout=self.timeout)
-            response.raise_for_status()
+            response = self._request(url)
             return str(response.text)
         except Exception as e:
             self.logger.error(f"请求 {url} 时发生错误: {str(e)}")
