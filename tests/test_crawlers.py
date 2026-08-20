@@ -2,6 +2,7 @@
 
 import json
 import time
+from typing import Any
 
 import pytest
 import requests
@@ -9,14 +10,14 @@ import requests
 import aram_mayhem_helper.crawlers.aramkit.aramkit_crawler as aramkit_mod
 import aram_mayhem_helper.crawlers.opgg.aram_augment_crawler as opgg_mod
 from aram_mayhem_helper.crawlers.aramkit.aramkit_crawler import AramkitCrawler
-from aram_mayhem_helper.crawlers.ddragon.champion_crawler import ChampionCrawler
+from aram_mayhem_helper.crawlers.ddragon.champion_crawler import ChampionCrawler, DDragon_VERSIONS_URL
 from aram_mayhem_helper.crawlers.opgg.aram_augment_crawler import AramAugmentCrawler
 
 
 class FakeResponse:
     def __init__(
         self,
-        payload: dict | None = None,
+        payload: Any = None,
         text: str = "",
         error: Exception | None = None,
         json_error: bool = False,
@@ -30,7 +31,7 @@ class FakeResponse:
         if self._error is not None:
             raise self._error
 
-    def json(self) -> dict:
+    def json(self) -> Any:
         if self._json_error:
             raise json.JSONDecodeError("bad json", "doc", 0)
         return self._payload
@@ -228,6 +229,54 @@ class TestAramkitCrawler:
 
 
 class TestChampionCrawler:
+    def test_get_latest_version_uses_session_timeout_and_numeric_order(self, crawler_env, monkeypatch) -> None:
+        monkeypatch.setattr(time, "sleep", lambda s: None)
+        crawler = ChampionCrawler(config=crawler_env)
+        session = FakeSession(
+            responses={DDragon_VERSIONS_URL: FakeResponse(payload=["16.9.9", "16.10.1", "16.10.10", "not-a-version"])}
+        )
+        crawler.session = session
+
+        assert crawler.get_latest_ddragon_version() == "16.10.10"
+        assert session.calls == [(DDragon_VERSIONS_URL, {"params": None, "timeout": crawler.timeout})]
+
+    def test_get_latest_version_retries_transient_request_failure(self, crawler_env, monkeypatch) -> None:
+        monkeypatch.setattr(time, "sleep", lambda s: None)
+        crawler = ChampionCrawler(config=crawler_env)
+        session = FakeSession()
+        responses = iter(
+            [
+                FakeResponse(error=requests.Timeout("slow")),
+                FakeResponse(payload=["16.10.1"]),
+            ]
+        )
+
+        def get(url: str, **kwargs):
+            session.calls.append((url, kwargs))
+            return next(responses)
+
+        monkeypatch.setattr(session, "get", get)
+        crawler.session = session
+
+        assert crawler.get_latest_ddragon_version() == "16.10.1"
+        assert len(session.calls) == 2
+        assert all(call[1]["timeout"] == crawler.timeout for call in session.calls)
+
+    def test_get_latest_version_rejects_invalid_payload(self, crawler_env, monkeypatch) -> None:
+        monkeypatch.setattr(time, "sleep", lambda s: None)
+        crawler = ChampionCrawler(config=crawler_env)
+        crawler.session = FakeSession(responses={DDragon_VERSIONS_URL: FakeResponse(payload={"version": "16.10.1"})})
+
+        with pytest.raises(ValueError, match="版本接口返回格式错误"):
+            crawler.get_latest_ddragon_version()
+
+    def test_crawl_returns_false_when_version_request_fails(self, crawler_env, monkeypatch) -> None:
+        monkeypatch.setattr(time, "sleep", lambda s: None)
+        crawler = ChampionCrawler(config=crawler_env)
+        crawler.session = FakeSession(default=FakeResponse(error=requests.Timeout("slow")))
+
+        assert crawler.crawl() is False
+
     def test_crawl_fetches_latest_version(self, crawler_env, monkeypatch) -> None:
         monkeypatch.setattr(time, "sleep", lambda s: None)
         crawler = ChampionCrawler(config=crawler_env)

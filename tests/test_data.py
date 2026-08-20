@@ -23,6 +23,46 @@ class TestGameDataChampions:
     def test_default_source_from_config(self, game_data) -> None:
         assert game_data.default_source() in ("opgg", "aramkit")
 
+    def test_selects_highest_numeric_json_version(self, game_data, fixture_data_dir) -> None:
+        champion_dir = fixture_data_dir / "ddragon" / "champions"
+        for filename, champion_name, champion_id in (
+            ("16.10.2.json", "Older", "901"),
+            ("16.10.10.json", "Newest", "902"),
+        ):
+            (champion_dir / filename).write_text(
+                json.dumps({"data": {champion_name: {"id": champion_name, "key": champion_id, "name": champion_name}}}),
+                encoding="utf-8",
+            )
+        (champion_dir / "99.99.99.txt").write_text(
+            json.dumps({"data": {"Wrong": {"id": "Wrong", "key": "903", "name": "Wrong"}}}),
+            encoding="utf-8",
+        )
+
+        assert game_data.champion_id_by_name("Newest") == "902"
+        assert game_data.champion_id_by_name("Older") is None
+        assert game_data.champion_id_by_name("Wrong") is None
+
+    def test_falls_back_to_next_valid_version_when_latest_file_is_corrupt(self, game_data, fixture_data_dir) -> None:
+        champion_dir = fixture_data_dir / "ddragon" / "champions"
+        (champion_dir / "16.9.9.json").write_text(
+            json.dumps({"data": {"Fallback": {"id": "Fallback", "key": "904", "name": "Fallback"}}}),
+            encoding="utf-8",
+        )
+        (champion_dir / "16.10.1.json").write_text("{not json", encoding="utf-8")
+
+        assert game_data.champion_id_by_name("Fallback") == "904"
+        assert game_data.champion_id_by_name("Ahri") is None
+
+    def test_falls_back_when_latest_file_has_invalid_schema(self, game_data, fixture_data_dir) -> None:
+        champion_dir = fixture_data_dir / "ddragon" / "champions"
+        (champion_dir / "16.9.9.json").write_text(
+            json.dumps({"data": {"Fallback": {"id": "Fallback", "key": "905", "name": "Fallback"}}}),
+            encoding="utf-8",
+        )
+        (champion_dir / "16.10.1.json").write_text(json.dumps({"data": []}), encoding="utf-8")
+
+        assert game_data.champion_id_by_name("Fallback") == "905"
+
 
 class TestGameDataAugmentEntries:
     def test_opgg_reads_data_field(self, game_data) -> None:

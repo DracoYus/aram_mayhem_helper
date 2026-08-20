@@ -95,6 +95,19 @@ class TestAramkitResources:
         assert resources.get_augment_info("8888") == {"name": "新版符文", "level": "0"}
         assert resources.get_augment_info("7777") is None  # 旧版目录不再被选中
 
+    def test_ignores_invalid_version_directories(self, fixture_data_dir) -> None:
+        res_dir = fixture_data_dir / "aramkit" / "resources"
+        invalid_dir = res_dir / "temporary"
+        shutil.copytree(res_dir / "16.0.1-abc123456789", invalid_dir)
+        (invalid_dir / "augments.json").write_text(
+            json.dumps({"8888": {"name": "无效目录符文", "rarity": "silver"}}), encoding="utf-8"
+        )
+
+        resources = AramkitResources(res_dir)
+
+        assert resources.get_augment_info("7777") is not None
+        assert resources.get_augment_info("8888") is None
+
     def test_reload_clears_and_repopulates(self, fixture_data_dir) -> None:
         resources = AramkitResources(fixture_data_dir / "aramkit" / "resources")
         assert resources.get_augment_info("7777") is not None

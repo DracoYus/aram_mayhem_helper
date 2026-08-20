@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from aram_mayhem_helper.utils.text_normalization import normalize_for_lookup
+from aram_mayhem_helper.utils.version import parse_version
+from aram_mayhem_helper.utils.version import version_sort_key as version_sort_key
 
 # aramkit rarity → 引擎 level（2=棱彩, 1=黄金, 0=白银）
 RARITY_TO_LEVEL = {"prismatic": "2", "gold": "1", "silver": "0"}
@@ -45,14 +47,6 @@ def convert_augment_records(augment_list: list[dict[str, Any]]) -> list[dict[str
     return converted
 
 
-def version_sort_key(version: str) -> tuple[Any, ...]:
-    """版本目录名排序键：按游戏版本号（major.minor）+ 日期/哈希排序取最新。"""
-    parts = version.split("-")
-    major_minor = parts[0].split(".")
-    rest = tuple(parts[1:]) if len(parts) > 1 else ()
-    return (int(major_minor[0]), int(major_minor[1])) + rest
-
-
 class AramkitResources:
     """懒加载 aramkit resources 文件，提供翻译表缺失条目的回退查找。"""
 
@@ -68,7 +62,9 @@ class AramkitResources:
             return
         if not self.resources_directory.exists():
             return
-        version_dirs = [d for d in self.resources_directory.iterdir() if d.is_dir()]
+        version_dirs = [
+            d for d in self.resources_directory.iterdir() if d.is_dir() and parse_version(d.name) is not None
+        ]
         if not version_dirs:
             return
         latest_dir = max(version_dirs, key=lambda d: version_sort_key(d.name))

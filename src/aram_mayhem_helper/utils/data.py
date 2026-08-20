@@ -8,6 +8,7 @@ from typing import Any
 from aram_mayhem_helper.utils.aramkit import AramkitResources, convert_augment_records
 from aram_mayhem_helper.utils.config import AppConfig, get_config
 from aram_mayhem_helper.utils.text_normalization import normalize_for_lookup
+from aram_mayhem_helper.utils.version import parse_version, version_sort_key
 
 
 class AugmentLookup:
@@ -117,18 +118,33 @@ class GameData:
         if not path.exists():
             self._champion_data = {}
         else:
-            files = [f for f in path.iterdir() if f.is_file()]
+            files = [
+                f
+                for f in path.iterdir()
+                if f.is_file() and f.suffix.lower() == ".json" and parse_version(f.stem) is not None
+            ]
+            files.sort(key=lambda f: version_sort_key(f.stem), reverse=True)
             if not files:
-                self.logger.error(f"没有找到任何英雄数据文件在: {path}")
+                self.logger.error(f"没有找到任何有效英雄数据文件在: {path}")
                 self._champion_data = {}
             else:
-                latest_file = max(files, key=lambda f: f.name)
-                try:
-                    with open(latest_file, "r", encoding="utf-8") as f:
-                        self._champion_data = json.load(f)["data"]
-                except Exception as e:
-                    self.logger.error(f"读取英雄ID时发生错误: {str(e)}")
-                    self._champion_data = {}
+                self._champion_data = {}
+                for latest_file in files:
+                    try:
+                        with open(latest_file, "r", encoding="utf-8") as f:
+                            payload = json.load(f)
+                        data = payload.get("data") if isinstance(payload, dict) else None
+                        if not isinstance(data, dict) or any(
+                            not isinstance(champ_info, dict) or not {"id", "key", "name"}.issubset(champ_info)
+                            for champ_info in data.values()
+                        ):
+                            raise ValueError("英雄数据文件缺少有效的 data 字段或英雄字段")
+                        self._champion_data = data
+                        break
+                    except (OSError, json.JSONDecodeError, TypeError, ValueError) as e:
+                        self.logger.warning(f"跳过无效英雄数据文件: {latest_file}, 错误: {str(e)}")
+                else:
+                    self.logger.error(f"所有英雄数据文件均无法读取: {path}")
         self._champion_name_by_key = {}
         self._champion_key_by_name = {}
         for champ_info in self._champion_data.values():
