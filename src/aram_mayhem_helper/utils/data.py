@@ -2,6 +2,7 @@
 
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -90,13 +91,14 @@ class AugmentLookup:
 class GameData:
     """游戏数据仓储门面：英雄元数据、符文条目（按 (champion, source) 缓存）、源感知查找。
 
-    构造仅保存配置路径，不产生任何文件读取（无导入期副作用）；
+    构造仅保存配置提供器，不产生任何文件读取（无导入期副作用）；全局单例通过
+    ``get_config`` 提供最新配置，显式传入 ``AppConfig`` 时保留固定配置注入语义；
     ``reload()`` 清空全部缓存（含翻译表与 aramkit 资源）。
     """
 
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(self, config: AppConfig | Callable[[], AppConfig]) -> None:
         self.logger = logging.getLogger(__name__)
-        self._config = config
+        self._config_provider: Callable[[], AppConfig] = config if callable(config) else lambda: config
         self._champion_data: dict[str, dict[str, Any]] | None = None
         self._champion_name_by_key: dict[str, str] | None = None  # key → 名称
         self._champion_key_by_name: dict[str, str] | None = None  # lower(name) → key
@@ -114,7 +116,7 @@ class GameData:
 
     def _load_champions(self) -> None:
         """加载英雄元数据并构建 key↔name 查找索引（一次性，供后续 O(1) 反查）。"""
-        path = self._config.champion_dir
+        path = self._config_provider().champion_dir
         if not path.exists():
             self._champion_data = {}
         else:
@@ -181,8 +183,8 @@ class GameData:
     def _augment_data_path(self, champion_id: str, source: str) -> Path:
         """该英雄在指定数据源下的条目文件路径。"""
         if source == "aramkit":
-            return self._config.aramkit_augment_dir / f"{champion_id}.json"
-        return self._config.opgg_augment_dir / f"{champion_id}.json"
+            return self._config_provider().aramkit_augment_dir / f"{champion_id}.json"
+        return self._config_provider().opgg_augment_dir / f"{champion_id}.json"
 
     def available_source(self, champion_id: str, preferred: str | None = None) -> str | None:
         """返回该英雄首个有符文数据的数据源（默认源优先，缺数据时回退另一源）。
@@ -254,12 +256,12 @@ class GameData:
 
     def _lookup_impl(self) -> AugmentLookup:
         if self._lookup is None:
-            self._lookup = AugmentLookup(self._config.trans_file, self._resources_impl())
+            self._lookup = AugmentLookup(self._config_provider().trans_file, self._resources_impl())
         return self._lookup
 
     def _resources_impl(self) -> AramkitResources:
         if self._resources is None:
-            self._resources = AramkitResources(self._config.aramkit_resources_dir)
+            self._resources = AramkitResources(self._config_provider().aramkit_resources_dir)
         return self._resources
 
     def augment_info(self, augment_id: str) -> dict[str, Any] | None:
@@ -286,7 +288,7 @@ class GameData:
 
     def default_source(self) -> str:
         """配置默认数据源。"""
-        return self._config.data_source.source
+        return self._config_provider().data_source.source
 
     # ── 刷新 ────────────────────────────────────────────────────────────
 
@@ -305,5 +307,5 @@ def get_game_data() -> GameData:
     """懒加载 GameData 单例（替代旧导入期构建全部数据对象的副作用）。"""
     global _game_data_singleton
     if _game_data_singleton is None:
-        _game_data_singleton = GameData(get_config())
+        _game_data_singleton = GameData(get_config)
     return _game_data_singleton

@@ -103,8 +103,7 @@ def _recognize_worker(source: str) -> None:
     """后台执行：识别当前英雄 → OCR 读取符文 → 生成推荐。
 
     不变式：本函数内的数据源一律显式传入（available_source 的 preferred /
-    Suggest.source），不依赖 default_source() —— 写回配置后 GameData 持有的
-    旧配置引用已过期，默认源可能不是 GUI 当前选择。
+    Suggest.source），使用 GUI 当前选择而非隐式默认。
     """
     game_data = get_game_data()
 

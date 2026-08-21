@@ -12,6 +12,7 @@ from aram_mayhem_helper.utils.config import (
     load_config,
     set_data_source,
 )
+from aram_mayhem_helper.utils.data import get_game_data
 
 MINIMAL_TOML = """
 [crawler]
@@ -264,6 +265,17 @@ class TestSetDataSource:
 
         assert old_cfg.config_path.read_text(encoding="utf-8") == original
         assert get_config() is old_cfg
+
+    def test_existing_game_data_uses_rebuilt_config(self, patched_singleton, monkeypatch) -> None:
+        monkeypatch.setattr("aram_mayhem_helper.utils.data._game_data_singleton", None)
+        game_data = get_game_data()
+
+        assert game_data.default_source() == "aramkit"
+
+        set_data_source("opgg")
+
+        assert get_game_data() is game_data
+        assert game_data.default_source() == "opgg"
 
     def test_same_value_does_not_write(self, tmp_path, patched_singleton) -> None:
         old_cfg = patched_singleton
