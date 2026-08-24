@@ -91,8 +91,8 @@ shrinkage_tau_factor = 0.5   # 贝叶斯收缩参数：τ = median(pop>0) × tau
 sigmoid_steepness = 1.0      # Sigmoid 陡峭度
 immediate_select_score_threshold = 0.70  # 快选分数阈值
 consider_select_score_threshold = 0.50   # 考虑分数阈值
-immediate_select_precentage_threshold = 0.10  # 快选排名阈值（百分比）
-consider_select_precentage_threshold = 0.30   # 考虑排名阈值（百分比）
+immediate_select_percentage_threshold = 0.10  # 快选排名阈值（百分比）
+consider_select_percentage_threshold = 0.30   # 考虑排名阈值（百分比）
 ```
 
 ## 使用说明

@@ -1,4 +1,4 @@
-"""utils.config 配置加载行为测试（TOML → 冻结数据类、拼写回退、env 注入）。"""
+"""utils.config 配置加载行为测试（TOML → 冻结数据类、env 注入）。"""
 
 from pathlib import Path
 
@@ -49,8 +49,8 @@ shrinkage_tau_factor = 0.5
 sigmoid_steepness = 1.0
 immediate_select_score_threshold = 0.70
 consider_select_score_threshold = 0.50
-immediate_select_precentage_threshold = 0.10
-consider_select_precentage_threshold = 0.30
+immediate_select_percentage_threshold = 0.17
+consider_select_percentage_threshold = 0.43
 """
 
 
@@ -89,19 +89,18 @@ class TestLoadConfig:
         assert cfg.data_dir == (tmp_path / "data").resolve()
         assert cfg.project_root == Path(__file__).resolve().parents[1]
 
-    def test_typo_spelling_accepted_into_new_fields(self, tmp_path) -> None:
+    def test_percentage_spelling_parsed(self, tmp_path) -> None:
         cfg = load_config(config_path=_write_config(tmp_path))
-        # 旧拼写 precentage 键 → 新字段 percentage
-        assert cfg.suggest.immediate_select_percentage_threshold == 0.10
-        assert cfg.suggest.consider_select_percentage_threshold == 0.30
+        assert cfg.suggest.immediate_select_percentage_threshold == 0.17
+        assert cfg.suggest.consider_select_percentage_threshold == 0.43
 
-    def test_correct_spelling_wins_over_typo(self, tmp_path) -> None:
+    def test_unknown_suggest_key_raises_clear_error(self, tmp_path) -> None:
         content = MINIMAL_TOML.replace(
-            "immediate_select_precentage_threshold = 0.10",
-            "immediate_select_precentage_threshold = 0.10\nimmediate_select_percentage_threshold = 0.42",
+            "consider_select_percentage_threshold = 0.43",
+            "consider_select_percentage_threshold = 0.43\nunsupported_percentage_threshold = 0.10",
         )
-        cfg = load_config(config_path=_write_config(tmp_path, content))
-        assert cfg.suggest.immediate_select_percentage_threshold == 0.42
+        with pytest.raises(ValueError, match="unsupported_percentage_threshold"):
+            load_config(config_path=_write_config(tmp_path, content))
 
     def test_invalid_source_falls_back_to_opgg(self, tmp_path) -> None:
         content = MINIMAL_TOML.replace('source = "aramkit"', 'source = "invalid"')

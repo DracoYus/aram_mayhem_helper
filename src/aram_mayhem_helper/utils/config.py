@@ -13,6 +13,16 @@ _DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_CONFIG_PATH = _DEFAULT_REPO_ROOT / "config" / "config.toml"
 
 VALID_SOURCES = ("opgg", "aramkit")
+_SUGGEST_CONFIG_KEYS = frozenset(
+    {
+        "shrinkage_tau_factor",
+        "sigmoid_steepness",
+        "immediate_select_score_threshold",
+        "consider_select_score_threshold",
+        "immediate_select_percentage_threshold",
+        "consider_select_percentage_threshold",
+    }
+)
 
 
 # ── 配置数据类 ────────────────────────────────────────────────────────────
@@ -187,10 +197,13 @@ def load_config(*, config_path: Path | None = None, data_dir: Path | None = None
     crawler_raw = _as_section(raw, "crawler")
     suggest_raw = _as_section(raw, "suggest")
     ocr_raw = _as_section(raw, "ocr")
+    unknown_suggest_keys = set(suggest_raw) - _SUGGEST_CONFIG_KEYS
+    if unknown_suggest_keys:
+        keys = ", ".join(sorted(unknown_suggest_keys))
+        raise ValueError(f"[suggest] 包含不支持的配置项: {keys}")
 
-    def suggest_float(old_key: str, new_key: str, default: float) -> float:
-        # 正确拼写优先，旧拼写（precentage）回退兼容
-        return float(_get(suggest_raw, new_key, default=_get(suggest_raw, old_key, default=default)))
+    def suggest_float(key: str, default: float) -> float:
+        return float(_get(suggest_raw, key, default=default))
 
     source_raw = str(_get(raw, "data_source", "source", default="opgg"))
     source = source_raw if source_raw in VALID_SOURCES else "opgg"
@@ -232,20 +245,12 @@ def load_config(*, config_path: Path | None = None, data_dir: Path | None = None
         ),
         data_source=DataSourceConfig(source=source),
         suggest=SuggestConfig(
-            shrinkage_tau_factor=suggest_float("shrinkage_tau_factor", "shrinkage_tau_factor", 0.5),
-            sigmoid_steepness=suggest_float("sigmoid_steepness", "sigmoid_steepness", 1.0),
-            immediate_select_score_threshold=suggest_float(
-                "immediate_select_score_threshold", "immediate_select_score_threshold", 0.70
-            ),
-            consider_select_score_threshold=suggest_float(
-                "consider_select_score_threshold", "consider_select_score_threshold", 0.50
-            ),
-            immediate_select_percentage_threshold=suggest_float(
-                "immediate_select_precentage_threshold", "immediate_select_percentage_threshold", 0.10
-            ),
-            consider_select_percentage_threshold=suggest_float(
-                "consider_select_precentage_threshold", "consider_select_percentage_threshold", 0.30
-            ),
+            shrinkage_tau_factor=suggest_float("shrinkage_tau_factor", 0.5),
+            sigmoid_steepness=suggest_float("sigmoid_steepness", 1.0),
+            immediate_select_score_threshold=suggest_float("immediate_select_score_threshold", 0.70),
+            consider_select_score_threshold=suggest_float("consider_select_score_threshold", 0.50),
+            immediate_select_percentage_threshold=suggest_float("immediate_select_percentage_threshold", 0.10),
+            consider_select_percentage_threshold=suggest_float("consider_select_percentage_threshold", 0.30),
         ),
         ocr=OcrConfig(
             debug_save_captures=bool(_get(ocr_raw, "debug_save_captures", default=False)),

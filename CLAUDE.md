@@ -93,7 +93,7 @@ Layering: entry points (cli/gui/web) → algorithm → utils/crawlers. Dependenc
 
 ## Important Details
 
-- **Config is frozen dataclasses**: `load_config()` supports env `ARAM_MAYHEM_CONFIG_DIR`/`ARAM_MAYHEM_DATA_DIR` (required for Docker, where `parents[3]` resolves to site-packages). The old `Config`/`config` compat shim still exists in `utils/config.py` — migrate remaining callers off it when touched. TOML keys accept both `precentage` (legacy) and `percentage` spellings.
+- **Config is frozen dataclasses**: `load_config()` supports env `ARAM_MAYHEM_CONFIG_DIR`/`ARAM_MAYHEM_DATA_DIR` (required for Docker, where `parents[3]` resolves to site-packages). The old `Config`/`config` compat shim still exists in `utils/config.py` — migrate remaining callers off it when touched.
 - **No import-time side effects**: `get_game_data()`/`get_config()`/`get_ocr_tool()` are lazy singletons; paddle/PIL/screeninfo import inside methods. Importing `aram_mayhem_helper.cli` must not load PaddleOCR.
 - **GameData.reload()** clears all caches (champion metadata, entries, translation table, aramkit resources) — GUI calls it after crawls.
 - **pipeline tolerances (intentional unification)**: single-item level groups (zero variance → `ValueError`/`ZeroDivisionError`) are logged and skipped, not raised; lookup-miss entries are dropped entirely (legacy Suggest kept them in `champion_augment_data`).

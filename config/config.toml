@@ -46,6 +46,6 @@ sigmoid_steepness = 1.0
 immediate_select_score_threshold = 0.70
 consider_select_score_threshold = 0.50
 # 排名阈值（百分比，0.1 ≈ 组内前 5 名）
-# 注：键名沿用历史拼写 precentage（代码层已用 percentage，两种拼写均被接受）
-immediate_select_precentage_threshold = 0.10
-consider_select_precentage_threshold = 0.30
+# 键名使用正确拼写 percentage
+immediate_select_percentage_threshold = 0.10
+consider_select_percentage_threshold = 0.30
