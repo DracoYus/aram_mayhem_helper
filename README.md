@@ -113,6 +113,10 @@ uv run python -m aram_mayhem_helper.cli aram-augment-crawler
 
 # 爬取符文数据（aramkit.com，第二数据源）
 uv run python -m aram_mayhem_helper.cli aramkit-crawler
+# 默认先检查服务器版本；版本未更新时跳过英雄数据爬取
+# 如果上次中断，再次运行会跳过已完成英雄并从进度继续
+# 如需忽略检查并强制重新爬取：
+uv run python -m aram_mayhem_helper.cli aramkit-crawler --force
 # 可选参数: --start-id 1 --end-id 999 --dataset all|high（high 为高分段数据）
 
 # 启动网页应用，浏览符文数据

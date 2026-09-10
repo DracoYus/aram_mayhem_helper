@@ -37,8 +37,12 @@ class TestParseArgs:
         args = _parse(monkeypatch, ["aramkit-crawler", "--dataset", "high"])
         assert args.command == "aramkit-crawler"
         assert args.dataset == "high"
+        assert args.force is False
         with pytest.raises(SystemExit):
             _parse(monkeypatch, ["aramkit-crawler", "--dataset", "invalid"])
+
+    def test_aramkit_crawler_force_option(self, monkeypatch) -> None:
+        assert _parse(monkeypatch, ["aramkit-crawler", "--force"]).force is True
 
     def test_web_defaults(self, monkeypatch) -> None:
         args = _parse(monkeypatch, ["web"])
@@ -96,10 +100,23 @@ class TestCliMain:
         called = []
         self._stub(
             monkeypatch,
-            aramkit_crawler=lambda start_id, end_id, dataset: called.append((start_id, end_id, dataset)),
+            aramkit_crawler=lambda start_id, end_id, dataset, *, force: called.append(
+                (start_id, end_id, dataset, force)
+            ),
         )
         assert cli.cli_main(["aramkit-crawler", "--start-id", "5", "--dataset", "high"]) == 0
-        assert called == [(5, 999, "high")]
+        assert called == [(5, 999, "high", False)]
+
+    def test_routes_aramkit_crawler_force(self, monkeypatch) -> None:
+        called = []
+        self._stub(
+            monkeypatch,
+            aramkit_crawler=lambda start_id, end_id, dataset, *, force: called.append(
+                (start_id, end_id, dataset, force)
+            ),
+        )
+        assert cli.cli_main(["aramkit-crawler", "--force"]) == 0
+        assert called == [(1, 999, None, True)]
 
     def test_routes_web_with_host_port(self, monkeypatch) -> None:
         class FakeApp:

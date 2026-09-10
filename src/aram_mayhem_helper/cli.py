@@ -34,7 +34,7 @@ def champion_crawler() -> None:
     logger.info("英雄数据爬取完成")
 
 
-def aramkit_crawler(start_id: int = 1, end_id: int = 999, dataset: str | None = None) -> None:
+def aramkit_crawler(start_id: int = 1, end_id: int = 999, dataset: str | None = None, *, force: bool = False) -> None:
     """
     爬取 aramkit.com 英雄符文数据入口
 
@@ -42,10 +42,11 @@ def aramkit_crawler(start_id: int = 1, end_id: int = 999, dataset: str | None = 
         start_id: 起始英雄ID
         end_id: 结束英雄ID
         dataset: 数据集（all 全体 / high 高分段），None 时取配置
+        force: 忽略服务器更新检查，强制全量爬取
     """
     logger.info(f"开始爬取 aramkit.com 英雄符文数据，从第{start_id}个到第{end_id}个英雄")
     crawler = AramkitCrawler(dataset=dataset)
-    crawler.crawl(start_id, end_id)
+    crawler.crawl(start_id, end_id, force=force)
     logger.info("aramkit.com 英雄符文数据爬取完成")
 
 
@@ -114,6 +115,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     aramkit_parser.add_argument(
         "--dataset", type=str, choices=["all", "high"], default=None, help="数据集: all(全体)/high(高分段)，默认取配置"
     )
+    aramkit_parser.add_argument(
+        "--force", action="store_true", help="忽略服务器更新检查，强制全量爬取"
+    )
 
     # web 命令
     web_parser = subparsers.add_parser("web", help="启动网页应用，浏览符文数据")
@@ -143,7 +147,7 @@ def cli_main(argv: list[str] | None = None) -> int:
     elif args.command == "champion-crawler":
         champion_crawler()
     elif args.command == "aramkit-crawler":
-        aramkit_crawler(args.start_id, args.end_id, args.dataset)
+        aramkit_crawler(args.start_id, args.end_id, args.dataset, force=args.force)
     elif args.command == "web":
         from aram_mayhem_helper.web import create_app
 

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -79,19 +80,28 @@ class BaseCrawler:
         Returns:
             保存成功返回 True，否则返回 False
         """
+        temporary_file: Path | None = None
         try:
             target_dir = base_directory or self.save_directory
             if sub_directory:
                 target_dir = target_dir / sub_directory
             target_dir.mkdir(parents=True, exist_ok=True)
             filepath = target_dir / f"{filename}.json"
-            with open(filepath, "w", encoding="utf-8") as f:
+            temporary_file = filepath.with_name(f".{filepath.name}.tmp")
+            with open(temporary_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(temporary_file, filepath)
             self.logger.info(f"数据已保存到 {filepath}")
             return True
         except Exception as e:
             self.logger.error(f"保存文件时发生错误: {str(e)}")
             return False
+        finally:
+            if temporary_file is not None:
+                try:
+                    temporary_file.unlink(missing_ok=True)
+                except OSError as e:
+                    self.logger.warning(f"清理临时文件失败: {temporary_file}, 错误: {str(e)}")
 
     def crawl_and_save(self, url: str, filename: str, params: dict[str, Any] | None = None) -> bool:
         """拉取 URL 数据并保存到本地。
