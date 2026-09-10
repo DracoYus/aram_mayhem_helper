@@ -115,9 +115,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     aramkit_parser.add_argument(
         "--dataset", type=str, choices=["all", "high"], default=None, help="数据集: all(全体)/high(高分段)，默认取配置"
     )
-    aramkit_parser.add_argument(
-        "--force", action="store_true", help="忽略服务器更新检查，强制全量爬取"
-    )
+    aramkit_parser.add_argument("--force", action="store_true", help="忽略服务器更新检查，强制全量爬取")
 
     # web 命令
     web_parser = subparsers.add_parser("web", help="启动网页应用，浏览符文数据")

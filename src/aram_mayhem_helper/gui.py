@@ -40,6 +40,19 @@ def print_log(log_text: str, log_area: scrolledtext.ScrolledText) -> None:
 logger = logging.getLogger("aram_mayhem_helper.gui")
 
 
+_CRAWLER_LOGGER_PREFIX = "aram_mayhem_helper.crawlers"
+
+
+class _HideCrawlerProgressFilter(logging.Filter):
+    """Keep crawler warnings and errors visible while hiding verbose progress logs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        is_crawler_logger = record.name == _CRAWLER_LOGGER_PREFIX or record.name.startswith(
+            f"{_CRAWLER_LOGGER_PREFIX}."
+        )
+        return not is_crawler_logger or record.levelno >= logging.WARNING
+
+
 def _enable_dpi_awareness() -> None:
     """Enable system DPI awareness on Windows to prevent blurry bitmap scaling.
 
@@ -72,6 +85,7 @@ class TkinterLogHandler(logging.Handler):
         # 只桥接消息本体：GUI 日志区的时间戳由 print_log 统一添加，
         # 完整格式（时间/logger 名/级别/文件名:行号）由文件日志（log_config.py）保留
         self.setFormatter(logging.Formatter("%(message)s"))
+        self.addFilter(_HideCrawlerProgressFilter())
 
     def emit(self, record: logging.LogRecord) -> None:
         """Format *record* and push it into the queue."""
