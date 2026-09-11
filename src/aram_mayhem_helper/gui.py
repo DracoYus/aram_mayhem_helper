@@ -1,3 +1,4 @@
+import contextvars
 import ctypes
 import logging
 import queue
@@ -71,20 +72,36 @@ def _scaled(value: int, factor: float) -> int:
     return max(1, round(value * factor))
 
 
+_TASK_CONTEXT: contextvars.ContextVar[str | None] = contextvars.ContextVar("gui_task_context", default=None)
+
+
+class _TaskLogFilter(logging.Filter):
+    """Route records to the handler belonging to the current worker task."""
+
+    def __init__(self, task_name: str) -> None:
+        super().__init__()
+        self.task_name = task_name
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        current_task = _TASK_CONTEXT.get()
+        return current_task == self.task_name or (current_task is None and self.task_name == "default")
+
+
 class TkinterLogHandler(logging.Handler):
     """Logging handler that bridges log records from worker threads to the Tkinter main thread.
 
     Messages are pushed into a :class:`queue.Queue` and drained by
     :func:`_poll_log_queue` on the main thread via :meth:`tk.Misc.after`.
-    Installed temporarily during a crawl to capture progress logs.
+    Installed temporarily while a background task is running.
     """
 
-    def __init__(self, log_queue: queue.Queue[str | None]) -> None:
+    def __init__(self, log_queue: queue.Queue[str | None], task_name: str = "default") -> None:
         super().__init__()
         self.log_queue = log_queue
         # 只桥接消息本体：GUI 日志区的时间戳由 print_log 统一添加，
         # 完整格式（时间/logger 名/级别/文件名:行号）由文件日志（log_config.py）保留
         self.setFormatter(logging.Formatter("%(message)s"))
+        self.addFilter(_TaskLogFilter(task_name))
         self.addFilter(_HideCrawlerProgressFilter())
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -110,6 +127,7 @@ def recognize_augment(
         "开始执行「识别符文」操作...",
         log_area,
         buttons,
+        task_name="recognize",
     )
 
 
@@ -163,7 +181,9 @@ def _warmup_ocr() -> None:
 
 
 # ====================== 第三步：后台任务（后台线程 + 日志桥接） ======================
-_task_in_progress = False
+_active_tasks: set[str] = set()
+_pending_reload_callbacks: list[Callable[[], None]] = []
+_TASK_LABELS = {"recognize": "识别", "crawl": "爬取"}
 
 
 def _poll_log_queue(
@@ -171,12 +191,13 @@ def _poll_log_queue(
     log_area: scrolledtext.ScrolledText,
     buttons: list[tk.Button],
     on_done: Callable[[], None] | None,
+    task_name: str,
 ) -> None:
     """Drain *log_queue* and display messages in *log_area* on the main thread.
 
     Called periodically via ``root.after()`` while a background task is running.
-    When a ``None`` sentinel is received the task is complete: buttons
-    are re-enabled, *on_done* is invoked, and polling stops.
+    When a ``None`` sentinel is received the task is complete: only its buttons
+    are re-enabled, completion callbacks are invoked, and polling stops.
     """
     try:
         while True:
@@ -186,32 +207,49 @@ def _poll_log_queue(
                 break
 
             if msg is None:
-                _finish_task(log_area, buttons, on_done)
+                _finish_task(log_area, buttons, on_done, task_name)
                 return
 
             print_log(msg, log_area)
     except Exception:
-        _finish_task(log_area, buttons, on_done)
+        _finish_task(log_area, buttons, on_done, task_name)
         print_log("日志轮询过程中发生错误，已恢复按钮状态", log_area)
         logger.exception("日志轮询异常")
         return
 
-    log_area.after(100, _poll_log_queue, log_queue, log_area, buttons, on_done)
+    log_area.after(100, _poll_log_queue, log_queue, log_area, buttons, on_done, task_name)
+
+
+def _run_pending_reload_callbacks() -> None:
+    """Run crawler reload callbacks once all task categories are idle."""
+    if _active_tasks or not _pending_reload_callbacks:
+        return
+    callbacks = list(_pending_reload_callbacks)
+    _pending_reload_callbacks.clear()
+    for callback in callbacks:
+        callback()
 
 
 def _finish_task(
     log_area: scrolledtext.ScrolledText,
     buttons: list[tk.Button],
     on_done: Callable[[], None] | None,
+    task_name: str,
 ) -> None:
-    """Re-enable buttons, run *on_done* (e.g. reload data), and reset task state."""
-    global _task_in_progress
-    _task_in_progress = False
+    """Finish one task without changing the state of unrelated task categories."""
+    _active_tasks.discard(task_name)
 
     for btn in buttons:
         btn.config(state=tk.NORMAL)
+
     if on_done is not None:
-        on_done()
+        # GameData.reload() invalidates shared caches.  Let an in-flight OCR
+        # task finish against its existing snapshot before refreshing them.
+        if task_name == "crawl" and _active_tasks:
+            _pending_reload_callbacks.append(on_done)
+        else:
+            on_done()
+    _run_pending_reload_callbacks()
 
 
 def _run_in_background(
@@ -220,20 +258,23 @@ def _run_in_background(
     log_area: scrolledtext.ScrolledText,
     buttons: list[tk.Button],
     on_done: Callable[[], None] | None = None,
+    *,
+    task_name: str = "default",
 ) -> None:
-    """Start *target* in a daemon thread with log bridging to the GUI.
+    """Start *target* in a daemon thread with task-scoped log bridging.
 
-    Installs :class:`TkinterLogHandler` on the ``aram_mayhem_helper`` logger,
-    disables *buttons*, starts polling the log queue, and spawns the worker.
-    A single ``_task_in_progress`` guard prevents concurrent tasks.
+    Tasks from different categories may run concurrently.  A second task in
+    the same category is rejected, and only the buttons belonging to that
+    category are disabled while it runs.
     """
-    global _task_in_progress
-    if _task_in_progress:
-        print_log("已有任务正在执行中，请等待完成后再试", log_area)
+    if task_name in _active_tasks:
+        task_label = _TASK_LABELS.get(task_name, task_name)
+        print_log(f"已有{task_label}任务正在执行中，请等待完成后再试", log_area)
         return
-    _task_in_progress = True
+
+    _active_tasks.add(task_name)
     log_queue: queue.Queue[str | None] = queue.Queue()
-    handler = TkinterLogHandler(log_queue)
+    handler = TkinterLogHandler(log_queue, task_name)
 
     app_logger = logging.getLogger("aram_mayhem_helper")
     app_logger.addHandler(handler)
@@ -242,15 +283,17 @@ def _run_in_background(
         btn.config(state=tk.DISABLED)
 
     print_log(description, log_area)
-    log_area.after(100, _poll_log_queue, log_queue, log_area, buttons, on_done)
+    log_area.after(100, _poll_log_queue, log_queue, log_area, buttons, on_done, task_name)
 
     def worker() -> None:
+        task_token = _TASK_CONTEXT.set(task_name)
         try:
             target()
         except Exception as e:
             app_logger.error("任务执行过程中发生未捕获的异常", exc_info=True)
             log_queue.put(f"任务执行过程中发生错误：{e}")
         finally:
+            _TASK_CONTEXT.reset(task_token)
             log_queue.put(None)
             app_logger.removeHandler(handler)
 
@@ -278,6 +321,7 @@ def fetch_champion_data(
         log_area,
         crawl_buttons,
         on_done=_reload_data_after_crawl(log_area),
+        task_name="crawl",
     )
 
 
@@ -336,6 +380,7 @@ def fetch_augment_data(
         log_area,
         crawl_buttons,
         on_done=_reload_data_after_crawl(log_area),
+        task_name="crawl",
     )
 
 
@@ -425,7 +470,7 @@ def create_gui() -> None:
     btn2 = tk.Button(
         action_group,
         text="识别符文",
-        command=lambda: recognize_augment(log_area, all_buttons, source_var.get()),
+        command=lambda: recognize_augment(log_area, action_buttons, source_var.get()),
         font=btn_font,
     )
     btn2.pack(fill=tk.X, padx=pad_sm, pady=pad_xs)
@@ -462,10 +507,11 @@ def create_gui() -> None:
     end_entry.insert(0, "999")
     end_entry.pack(side=tk.LEFT)
 
-    all_buttons = [btn2, btn3, btn4]
+    action_buttons = [btn2]
+    crawl_buttons = [btn3, btn4]
 
     def _on_fetch_champion() -> None:
-        fetch_champion_data(log_area, all_buttons)
+        fetch_champion_data(log_area, crawl_buttons)
 
     def _on_fetch_augment() -> None:
         try:
@@ -474,7 +520,7 @@ def create_gui() -> None:
         except ValueError:
             print_log("页数格式错误，使用默认值（1-999）", log_area)
             start, end = 1, 999
-        fetch_augment_data(log_area, all_buttons, start, end, source_var.get())
+        fetch_augment_data(log_area, crawl_buttons, start, end, source_var.get())
 
     btn3.config(command=_on_fetch_champion)
     btn4.config(command=_on_fetch_augment)
