@@ -15,10 +15,16 @@ from typing import Any
 import numpy as np
 
 from aram_mayhem_helper.utils.config import get_config
-from aram_mayhem_helper.utils.retry import retry_on_exception
 
 # 失败截图文件名中 OCR 文本片段的长度上限
 _MAX_NAME_LENGTH = 30
+
+# 区域识别失败后的重新截图重试参数（与原 recognize_text 重试语义对齐：共 3 次尝试）
+_REGION_MAX_ATTEMPTS = 3
+_REGION_RETRY_DELAY = 0.5
+_REGION_RETRY_BACKOFF = 1.5
+# 识别异常（非名称未匹配）保存现场截图时使用的文件名片段
+_OCR_ERROR_CAPTURE_TAG = "ocr异常"
 
 
 def _safe_filename(text: str, max_length: int = _MAX_NAME_LENGTH) -> str:
@@ -173,7 +179,6 @@ class OCRTool:
         except Exception as e:
             raise RuntimeError(f"屏幕截图失败: {str(e)}")
 
-    @retry_on_exception(max_retries=2, delay=0.5, backoff_factor=1.5, exceptions=(RuntimeError,))
     def recognize_text(self, image: np.ndarray[Any, Any] | str) -> list[dict[str, Any]]:
         """
         识别图像中的文本
@@ -183,7 +188,10 @@ class OCRTool:
         try:
             result = self._get_ocr().ocr(image, cls=self.use_angle_cls)
         except Exception as e:
-            raise RuntimeError(f"OCR 识别失败: {str(e)}")
+            # 不在本层重试：底层 oneDNN 推理对特定画面内容可能确定性失败，
+            # 重试同一张图必然复现（历史上 3 次重试全部失败）。重试由
+            # get_augments 用「重新截图」完成，换一张图即可绕过。
+            raise RuntimeError(f"OCR 识别失败: {str(e)}") from e
 
         # 解析结果为结构化数据
         parsed_result = []
@@ -233,6 +241,42 @@ class OCRTool:
         line_boxes.sort(key=lambda r: min(p[0] for p in r["bbox"]))
         return "".join(r["text"].strip() for r in line_boxes)
 
+    def _recognize_region(
+        self, index: int, region: tuple[float, float, float, float], width: int, height: int
+    ) -> tuple[np.ndarray[Any, Any], list[dict[str, Any]]]:
+        """截图单个区域并识别，失败时重新截图重试。
+
+        oneDNN 推理对某些画面内容（如游戏过渡帧）可能确定性失败——同一张图
+        重试必然复现，因此每次尝试都重新截图（换图即绕过）。首次失败即保存
+        该区域截图到 ``ocr_failure_dir``，保留失败现场供排查。
+
+        Returns:
+            (最后一次成功识别使用的截图, 解析结果)
+
+        Raises:
+            RuntimeError: 全部尝试均失败（附最后一次错误信息）
+        """
+        left, top, right, bottom = region_to_pixel(region, width, height)
+        last_error: Exception | None = None
+        delay = _REGION_RETRY_DELAY
+        for attempt in range(1, _REGION_MAX_ATTEMPTS + 1):
+            image = self.capture_screen((left, top, right, bottom))
+            # 按需扩展到目标长度：get_augments 预分配 None 占位，直接调用（测试）则从空列表增长
+            while len(self._last_captures) <= index:
+                self._last_captures.append(image)
+            self._last_captures[index] = image
+            try:
+                return image, self.recognize_text(image)
+            except RuntimeError as e:
+                last_error = e
+                self.logger.warning(f"区域{index} 第{attempt}次识别失败: {e}")
+                self._save_capture(index, _OCR_ERROR_CAPTURE_TAG, get_config().ocr_failure_dir)
+                if attempt < _REGION_MAX_ATTEMPTS:
+                    time.sleep(delay)
+                    delay *= _REGION_RETRY_BACKOFF
+        assert last_error is not None
+        raise last_error
+
     def get_augments(self) -> list[str]:
         """
         获取当前屏幕中的符文选项，并保留各区域截图（供识别失败时保存排查）
@@ -245,22 +289,19 @@ class OCRTool:
         width, height = self.screen_size
         captures: list[np.ndarray[Any, Any]] = []
         text_list: list[str] = []
+        self._last_captures = [None] * len(REGIONS)  # type: ignore[list-item]
         for idx, region in enumerate(REGIONS):
-            _cap_start = time.perf_counter()
-            image = self.capture_screen(region_to_pixel(region, width, height))
-            _cap_end = time.perf_counter()
+            _region_start = time.perf_counter()
+            image, results = self._recognize_region(idx, region, width, height)
+            _region_end = time.perf_counter()
             captures.append(image)
 
-            _rec_start = time.perf_counter()
-            results = self.recognize_text(image)
-            _rec_end = time.perf_counter()
             # 合并第一行被标点断口拆开的文本框（如 "升级：中娅" → ["升级：", "中娅"]）；
             # 描述文字在下方另一行，纵向不重叠，不会混入名称（匹配为精确查表）
             text_list.append(self._join_first_line(results))
 
             _perf_logger().debug(
-                f"区域{idx} 截图{_cap_end - _cap_start:.3f}s | 识别{_rec_end - _rec_start:.3f}s "
-                f"(累计 {_rec_end - _total_start:.3f}s)"
+                f"区域{idx} 截图+识别{_region_end - _region_start:.3f}s (累计 {_region_end - _total_start:.3f}s)"
             )
         self._last_captures = captures
         if self.debug_capture_dir is not None:

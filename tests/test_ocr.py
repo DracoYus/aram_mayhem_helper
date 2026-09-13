@@ -71,6 +71,100 @@ class TestRecognizeTextParsing:
             tool.recognize_text("fake")
 
 
+class TestRecognizeRegionRetry:
+    """区域识别失败 → 重新截图重试（换图绕过 oneDNN 对特定画面的确定性失败）。"""
+
+    def _tool_with_screen(self) -> OCRTool:
+        tool = _make_ocr()
+        tool._screen_size = (1920, 1080)
+        return tool
+
+    def test_succeeds_first_attempt_no_recapture(self) -> None:
+        tool = self._tool_with_screen()
+        captures: list[tuple[int, int, int, int]] = []
+        tool.capture_screen = lambda bbox: captures.append(bbox) or np.zeros((10, 10), dtype=np.uint8)  # type: ignore[method-assign]
+        tool.recognize_text = lambda img: [{"text": "x", "confidence": 1.0, "bbox": []}]  # type: ignore[method-assign]
+
+        image, results = tool._recognize_region(0, REGIONS[0], 1920, 1080)
+
+        assert len(captures) == 1
+        assert results == [{"text": "x", "confidence": 1.0, "bbox": []}]
+        assert tool._last_captures[0] is image
+
+    def test_recaptures_on_failure_then_succeeds(self, monkeypatch, tmp_path) -> None:
+        tool = self._tool_with_screen()
+        capture_count = {"n": 0}
+        recognize_count = {"n": 0}
+
+        def fake_capture(bbox):
+            capture_count["n"] += 1
+            return np.full((10, 10), capture_count["n"], dtype=np.uint8)
+
+        def fake_recognize(img):
+            recognize_count["n"] += 1
+            if recognize_count["n"] == 1:
+                raise RuntimeError("OCR 识别失败: could not execute a primitive")
+            return []
+
+        tool.capture_screen = fake_capture  # type: ignore[method-assign]
+        tool.recognize_text = fake_recognize  # type: ignore[method-assign]
+        monkeypatch.setattr(
+            "aram_mayhem_helper.ocr.ocr_tool.get_config", lambda: type("Cfg", (), {"ocr_failure_dir": tmp_path})()
+        )
+        monkeypatch.setattr("aram_mayhem_helper.ocr.ocr_tool.time.sleep", lambda s: None)
+
+        image, results = tool._recognize_region(0, REGIONS[0], 1920, 1080)
+
+        assert capture_count["n"] == 2  # 第二次重新截图后成功
+        assert recognize_count["n"] == 2
+        assert results == []
+        assert image[0, 0] == 2  # 返回的是第二次（成功）的截图
+        assert tool._last_captures[0] is image
+
+    def test_saves_failure_capture_on_first_failure(self, monkeypatch, tmp_path) -> None:
+        tool = self._tool_with_screen()
+        tool.capture_screen = lambda bbox: np.zeros((10, 10), dtype=np.uint8)  # type: ignore[method-assign]
+
+        def fake_recognize(img):
+            raise RuntimeError("OCR 识别失败: could not execute a primitive")
+
+        tool.recognize_text = fake_recognize  # type: ignore[method-assign]
+        monkeypatch.setattr(
+            "aram_mayhem_helper.ocr.ocr_tool.get_config", lambda: type("Cfg", (), {"ocr_failure_dir": tmp_path})()
+        )
+        monkeypatch.setattr("aram_mayhem_helper.ocr.ocr_tool.time.sleep", lambda s: None)
+
+        with pytest.raises(RuntimeError, match="could not execute a primitive"):
+            tool._recognize_region(0, REGIONS[0], 1920, 1080)
+
+        saved = list(tmp_path.iterdir())
+        assert len(saved) == 3  # 3 次尝试各保存一张现场截图
+        assert all("region0" in p.name for p in saved)
+
+    def test_exhausts_attempts_with_backoff_delays(self, monkeypatch, tmp_path) -> None:
+        tool = self._tool_with_screen()
+        recognize_count = {"n": 0}
+        delays: list[float] = []
+
+        tool.capture_screen = lambda bbox: np.zeros((10, 10), dtype=np.uint8)  # type: ignore[method-assign]
+
+        def fake_recognize(img):
+            recognize_count["n"] += 1
+            raise RuntimeError("OCR 识别失败: could not execute a primitive")
+
+        tool.recognize_text = fake_recognize  # type: ignore[method-assign]
+        monkeypatch.setattr(
+            "aram_mayhem_helper.ocr.ocr_tool.get_config", lambda: type("Cfg", (), {"ocr_failure_dir": tmp_path})()
+        )
+        monkeypatch.setattr("aram_mayhem_helper.ocr.ocr_tool.time.sleep", delays.append)
+
+        with pytest.raises(RuntimeError):
+            tool._recognize_region(0, REGIONS[0], 1920, 1080)
+
+        assert recognize_count["n"] == 3  # 共 3 次尝试（与原 recognize_text 重试语义一致）
+        assert delays == [0.5, 0.75]  # 0.5 × 1.5 退避，最后一次尝试后不再 sleep
+
+
 class TestCaptureAndRecognize:
     def test_joins_texts(self) -> None:
         tool = _make_ocr()
