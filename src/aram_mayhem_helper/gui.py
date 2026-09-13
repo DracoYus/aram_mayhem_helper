@@ -337,64 +337,85 @@ def fetch_augment_data(
 
 
 # ====================== 第四步：创建完整GUI（按钮+日志区域） ======================
-def create_gui() -> None:
-    # 进程 DPI 感知必须先于 Tk() 声明：否则进程为 unaware，Windows 把高 DPI 屏
-    # 虚拟化后整窗位图拉伸（文字模糊）；且 OCR 的 screeninfo 会在运行中途调用
-    # SetProcessDpiAwareness(2) 抢改感知级别，已打开的窗口会突然"缩回"物理像素。
+# 设计稿基准：600×380 @ 1080p，所有尺寸按屏幕比例系数统一缩放
+_BASE_WIDTH = 600
+_BASE_HEIGHT = 380
+_BASE_SHORT_EDGE = 1080  # FHD 的较短边基准
+_MAX_WINDOW_FRACTION = 0.85  # 窗口钳制到屏幕的 85% 以内
+
+
+def _create_window() -> tuple[tk.Tk, float]:
+    """创建主窗口并配置 DPI/尺寸/位置，返回 (root, 屏幕比例系数)。
+
+    进程 DPI 感知必须先于 Tk() 声明：否则进程为 unaware，Windows 把高 DPI 屏
+    虚拟化后整窗位图拉伸（文字模糊）；且 OCR 的 screeninfo 会在运行中途调用
+    SetProcessDpiAwareness(2) 抢改感知级别，已打开的窗口会突然"缩回"物理像素。
+
+    跨屏视觉一致性：此前字体按 DPI 系数缩放、窗口按 分辨率/1080 缩放，两套系数
+    在不同显示器上各自偏离，导致同一窗口内字体/间距与窗口的比例随屏幕漂移。
+    现方案：统一使用屏幕比例系数 scale = 主屏较短边/1080，窗口、字体、间距
+    全部按同一系数缩放。窗口像素尺寸固定后拖到副屏不会重排，任何分辨率的
+    显示器上布局比例都与设计稿一致。
+    """
     ensure_per_monitor_dpi_awareness()
 
     root = tk.Tk()
     root.title("LOL海克斯乱斗工具")
 
-    # --- 跨屏视觉一致性策略 ---
-    # 问题根源：此前字体按 DPI 系数缩放、窗口按 分辨率/1080 缩放，两套系数在
-    # 不同显示器上各自偏离，导致同一窗口内字体/间距与窗口的比例随屏幕漂移。
-    #
-    # 现方案：统一使用屏幕比例系数 scale = 主屏较短边/1080，窗口、字体、间距
-    # 全部按同一系数缩放。窗口像素尺寸固定后拖到副屏不会重排，任何分辨率的
-    # 显示器上布局比例都与设计稿（600×380 @ 1080p）一致。
     phys_w = root.winfo_screenwidth()
     phys_h = root.winfo_screenheight()
-    scale = min(phys_w, phys_h) / 1080  # 1080 是 FHD 的较短边基准
+    scale = min(phys_w, phys_h) / _BASE_SHORT_EDGE
 
-    # 窗口尺寸：设计稿 600×380 @ 1080p，按比例缩放，钳制到屏幕 85% 以内
-    win_w = max(600, min(int(600 * scale), int(phys_w * 0.85)))
-    win_h = max(380, min(int(380 * scale), int(phys_h * 0.85)))
-
-    # 默认位置：屏幕居中
+    # 窗口尺寸：设计稿基准按比例缩放，钳制到屏幕 85% 以内；默认屏幕居中
+    win_w = max(_BASE_WIDTH, min(int(_BASE_WIDTH * scale), int(phys_w * _MAX_WINDOW_FRACTION)))
+    win_h = max(_BASE_HEIGHT, min(int(_BASE_HEIGHT * scale), int(phys_h * _MAX_WINDOW_FRACTION)))
     x = (phys_w - win_w) // 2
     y = (phys_h - win_h) // 2
     root.geometry(f"{win_w}x{win_h}+{x}+{y}")
-    root.minsize(600, 380)
+    root.minsize(_BASE_WIDTH, _BASE_HEIGHT)
+    return root, scale
 
-    def _apply_capture_exclusion() -> None:
-        """窗口映射后把主窗从屏幕截图中排除（见 utils/window_capture.py）。
 
-        必须等 Tk 顶层包装窗口真正创建/映射后调用：过早调用时
-        GetParent(winfo_id()) 返回 0（实测日志："窗口句柄 0x0 无效"），
-        排除不生效，工具窗仍会被拍进 OCR 截图。after_idle 在首个事件
-        循环迭代即触发，仍早于映射，因此这里用 wait_visibility 阻塞
-        等待窗口可见（在 mainloop 启动前调用是 Tk 的标准用法）。
-        """
-        root.wait_visibility()
-        exclude_window_from_capture(ctypes.windll.user32.GetParent(root.winfo_id()))
+def _apply_capture_exclusion(root: tk.Tk) -> None:
+    """窗口映射后把主窗从屏幕截图中排除（见 utils/window_capture.py）。
 
-    _apply_capture_exclusion()
+    必须等 Tk 顶层包装窗口真正创建/映射后调用：过早调用时
+    GetParent(winfo_id()) 返回 0（实测日志："窗口句柄 0x0 无效"），
+    排除不生效，工具窗仍会被拍进 OCR 截图。after_idle 在首个事件
+    循环迭代即触发，仍早于映射，因此这里用 wait_visibility 阻塞
+    等待窗口可见（在 mainloop 启动前调用是 Tk 的标准用法）。
+    """
+    root.wait_visibility()
+    exclude_window_from_capture(ctypes.windll.user32.GetParent(root.winfo_id()))
 
-    # 字体：负数点数字号绕过 Tk 的 DPI 换算，直接按像素解释，与窗口同一系数
-    # 缩放，保证跨屏比例一致（正数点数会被 Tk 按显示器 DPI 二次换算，造成
-    # 字体与窗口比例漂移）。
-    btn_font = ("微软雅黑", -_scaled(14, scale))
-    label_font = ("微软雅黑", -_scaled(12, scale))
+
+def _create_log_widget(root: tk.Tk, scale: float) -> scrolledtext.ScrolledText:
+    """创建日志文本控件（不 pack：pack 顺序决定布局，需在控件区之后）。"""
     log_font = ("Consolas", -_scaled(13, scale))
 
-    # Padding：与窗口同一系数缩放的像素值
+    # wrap=NONE：长行（符文推荐等）不折行，保证一条日志始终在同一行内可读；
+    # 配合底部水平滚动条查看超长行。
+    return scrolledtext.ScrolledText(
+        root,
+        font=log_font,
+        state=tk.DISABLED,
+        wrap=tk.NONE,
+    )
+
+
+def _build_control_area(
+    root: tk.Tk,
+    log_area: scrolledtext.ScrolledText,
+    scale: float,
+) -> None:
+    """构建顶部控件区：数据源选择 + 游戏操作/数据抓取两个按钮组（含回调接线）。"""
+    btn_font = ("微软雅黑", -_scaled(14, scale))
+    label_font = ("微软雅黑", -_scaled(12, scale))
     pad_lg = _scaled(20, scale)
     pad_md = _scaled(10, scale)
     pad_sm = _scaled(5, scale)
     pad_xs = _scaled(2, scale)
 
-    # --- Control area: two side-by-side groups ---
     control_frame = tk.Frame(root)
     control_frame.pack(pady=(pad_md, 0), padx=pad_lg, fill=tk.X)
     control_frame.grid_columnconfigure(0, weight=1)
@@ -434,7 +455,7 @@ def create_gui() -> None:
     btn2 = tk.Button(
         action_group,
         text="识别符文",
-        command=lambda: recognize_augment(log_area, action_buttons, source_var.get()),
+        command=lambda: recognize_augment(log_area, [btn2], source_var.get()),
         font=btn_font,
     )
     btn2.pack(fill=tk.X, padx=pad_sm, pady=pad_xs)
@@ -471,11 +492,8 @@ def create_gui() -> None:
     end_entry.insert(0, "999")
     end_entry.pack(side=tk.LEFT)
 
-    action_buttons = [btn2]
-    crawl_buttons = [btn3, btn4]
-
     def _on_fetch_champion() -> None:
-        fetch_champion_data(log_area, crawl_buttons)
+        fetch_champion_data(log_area, [btn3, btn4])
 
     def _on_fetch_augment() -> None:
         try:
@@ -484,28 +502,36 @@ def create_gui() -> None:
         except ValueError:
             print_log("页数格式错误，使用默认值（1-999）", log_area)
             start, end = 1, 999
-        fetch_augment_data(log_area, crawl_buttons, start, end, source_var.get())
+        fetch_augment_data(log_area, [btn3, btn4], start, end, source_var.get())
 
     btn3.config(command=_on_fetch_champion)
     btn4.config(command=_on_fetch_augment)
 
-    # 3. 日志输出区域（带滚动条，只读，填充剩余空间）
+
+def _pack_log_area(root: tk.Tk, log_area: scrolledtext.ScrolledText, scale: float) -> None:
+    """布局日志输出区域（标签 + 只读文本 + 水平滚动条，填充剩余空间）。"""
+    label_font = ("微软雅黑", -_scaled(12, scale))
+    pad_lg = _scaled(20, scale)
+    pad_sm = _scaled(5, scale)
+
     log_label = tk.Label(root, text="运行日志：", font=label_font)
     log_label.pack(anchor="w", padx=pad_lg, pady=(pad_sm, 0))
 
-    # wrap=NONE：长行（符文推荐等）不折行，保证一条日志始终在同一行内可读；
-    # 配合底部水平滚动条查看超长行。
-    log_area = scrolledtext.ScrolledText(
-        root,
-        font=log_font,
-        state=tk.DISABLED,
-        wrap=tk.NONE,
-    )
     log_area.pack(padx=pad_lg, pady=pad_sm, fill=tk.BOTH, expand=True)
     # ScrolledText 只自带竖向滚动条，水平滚动条需手动附加到其内部 frame
     hscroll = tk.Scrollbar(log_area.frame, orient=tk.HORIZONTAL, command=log_area.xview)
     hscroll.pack(side=tk.BOTTOM, fill=tk.X)
     log_area.config(xscrollcommand=hscroll.set)
+
+
+def create_gui() -> None:
+    root, scale = _create_window()
+    _apply_capture_exclusion(root)
+
+    # 日志控件先创建（按钮回调闭包引用它），但 pack 在控件区之后（pack 顺序 = 布局顺序）
+    log_area = _create_log_widget(root, scale)
+    _build_control_area(root, log_area, scale)
+    _pack_log_area(root, log_area, scale)
 
     # 初始化日志
     print_log("GUI已启动，等待执行操作...", log_area)
