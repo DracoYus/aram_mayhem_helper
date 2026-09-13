@@ -16,6 +16,7 @@ from aram_mayhem_helper.crawlers.base import BaseCrawler
 from aram_mayhem_helper.utils.aramkit import version_sort_key
 from aram_mayhem_helper.utils.config import AppConfig, get_config
 from aram_mayhem_helper.utils.data import get_game_data
+from aram_mayhem_helper.utils.update_check import UpdateState, UpdateStatus
 
 # 数据版本: 16.15-20260805-7e30d3443ba1（游戏版本-日期-哈希）
 DATA_VERSION_RE = re.compile(r"\d+\.\d+-\d{8}-[a-f0-9]{12}")
@@ -73,6 +74,30 @@ class AramkitCrawler(BaseCrawler):
             self.logger.error(f"请求 {url} 时发生错误: {str(e)}")
             return None
 
+    def fetch_remote_versions(self) -> tuple[str, str] | None:
+        """从首页 HTML 解析最新数据/资源版本号（纯读取，不写 version.json）。
+
+        供 ``discover_versions``（爬取前写盘）与 ``check_update``（只读比较）
+        共用；首页抓取失败或未发现完整版本信息时返回 None。
+
+        Returns:
+            (data_version, resources_version) 元组，失败时 None
+        """
+        html = self.fetch_text(self.homepage_url)
+        if html is None:
+            return None
+        data_versions = DATA_VERSION_RE.findall(html)
+        resources_versions = RESOURCES_VERSION_RE.findall(html)
+        if not (data_versions and resources_versions):
+            self.logger.warning(
+                f"首页未发现完整版本信息: data={len(data_versions)}, resources={len(resources_versions)}"
+            )
+            return None
+        data_version = max(set(data_versions), key=version_sort_key)
+        resources_version = max(set(resources_versions), key=version_sort_key)
+        self.logger.info(f"从首页发现版本: data={data_version}, resources={resources_version}")
+        return data_version, resources_version
+
     def discover_versions(self) -> tuple[str, str]:
         """
         从首页 HTML 中发现最新数据/资源版本号，并写入 version.json。
@@ -83,29 +108,43 @@ class AramkitCrawler(BaseCrawler):
         Returns:
             (data_version, resources_version) 元组
         """
-        html = self.fetch_text(self.homepage_url)
-        if html is not None:
-            data_versions = DATA_VERSION_RE.findall(html)
-            resources_versions = RESOURCES_VERSION_RE.findall(html)
-            if data_versions and resources_versions:
-                data_version = max(set(data_versions), key=version_sort_key)
-                resources_version = max(set(resources_versions), key=version_sort_key)
-                self.logger.info(f"从首页发现版本: data={data_version}, resources={resources_version}")
-                self._state.save(data_version, resources_version)
-                return data_version, resources_version
-            self.logger.warning(
-                f"首页未发现完整版本信息: data={len(data_versions)}, resources={len(resources_versions)}"
-            )
+        remote = self.fetch_remote_versions()
+        if remote is not None:
+            data_version, resources_version = remote
+            self._state.save(data_version, resources_version)
+            return data_version, resources_version
 
         # 回退本地缓存
         cached = self._state.read()
         if cached:
-            data_version = cached.get("data_version")
-            resources_version = cached.get("resources_version")
-            if data_version and resources_version:
-                self.logger.info(f"使用本地缓存的版本: data={data_version}, resources={resources_version}")
-                return data_version, resources_version
+            fallback_data = cached.get("data_version")
+            fallback_resources = cached.get("resources_version")
+            if fallback_data and fallback_resources:
+                self.logger.info(f"使用本地缓存的版本: data={fallback_data}, resources={fallback_resources}")
+                return str(fallback_data), str(fallback_resources)
         raise RuntimeError("无法发现 aramkit 数据版本（首页抓取失败且无本地缓存）")
+
+    def check_update(self) -> UpdateStatus:
+        """只读更新检查：比较首页最新数据版本与本地 version.json 记录。
+
+        不写任何状态文件（区别于 ``discover_versions``），首页抓取失败时
+        返回 unknown，绝不误报"已是最新"。
+
+        Returns:
+            检查结果（见 :class:`UpdateStatus`）
+        """
+        remote = self.fetch_remote_versions()
+        if remote is None:
+            return UpdateStatus(source="aramkit", state="unknown", error="无法获取远端版本")
+        remote_version = remote[0]
+        cached = self._state.read()
+        local_version = cached.get("data_version") if cached else None
+        if not local_version:
+            return UpdateStatus(source="aramkit", state="no_local_data", remote_version=remote_version)
+        state: UpdateState = "update_available"
+        if local_version == remote_version:
+            state = "up_to_date"
+        return UpdateStatus(source="aramkit", state=state, local_version=local_version, remote_version=remote_version)
 
     def _resources_exist(self, resources_version: str) -> bool:
         """
@@ -223,8 +262,8 @@ class AramkitCrawler(BaseCrawler):
         self.data_version = data_version
         self.resources_version = resources_version
         has_progress = self._state.completed_ids_for(previous, data_version, start_id, end_id) is not None
-        stats_up_to_date = not force and not has_progress and self._state.stats_up_to_date(
-            previous, data_version, start_id, end_id
+        stats_up_to_date = (
+            not force and not has_progress and self._state.stats_up_to_date(previous, data_version, start_id, end_id)
         )
 
         if self._resources_exist(resources_version):

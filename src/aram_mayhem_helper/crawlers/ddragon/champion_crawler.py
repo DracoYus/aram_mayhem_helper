@@ -6,7 +6,8 @@ import requests
 
 from aram_mayhem_helper.crawlers.base import BaseCrawler
 from aram_mayhem_helper.utils.config import AppConfig, get_config
-from aram_mayhem_helper.utils.version import latest_version
+from aram_mayhem_helper.utils.update_check import UpdateStatus
+from aram_mayhem_helper.utils.version import latest_version, parse_version
 
 DDragon_VERSIONS_URL = "https://ddragon.leagueoflegends.com/api/versions.json"
 
@@ -44,6 +45,39 @@ class ChampionCrawler(BaseCrawler):
         if latest is None:
             raise ValueError("Data Dragon 版本接口未返回有效版本号")
         return latest
+
+    def _latest_local_version(self) -> str | None:
+        """本地英雄数据目录中最新有效版本号（文件名即版本），无数据时 None。"""
+        if not self.save_directory.exists():
+            return None
+        names = [f.stem for f in self.save_directory.iterdir() if f.is_file() and f.suffix.lower() == ".json"]
+        return latest_version(names)
+
+    def check_update(self) -> UpdateStatus:
+        """只读更新检查：比较 Data Dragon 最新版本与本地英雄数据文件版本。
+
+        远端不可达时返回 unknown，绝不误报"已是最新"。
+
+        Returns:
+            检查结果（见 :class:`UpdateStatus`）
+        """
+        try:
+            remote_version = self.get_latest_ddragon_version()
+        except (requests.RequestException, ValueError) as e:
+            self.logger.error(f"更新检查获取 Data Dragon 版本失败: {str(e)}")
+            return UpdateStatus(source="ddragon", state="unknown", error=str(e))
+        local_version = self._latest_local_version()
+        if local_version is None:
+            return UpdateStatus(source="ddragon", state="no_local_data", remote_version=remote_version)
+        local_key = parse_version(local_version)
+        remote_key = parse_version(remote_version)
+        if local_key is not None and remote_key is not None and local_key >= remote_key:
+            return UpdateStatus(
+                source="ddragon", state="up_to_date", local_version=local_version, remote_version=remote_version
+            )
+        return UpdateStatus(
+            source="ddragon", state="update_available", local_version=local_version, remote_version=remote_version
+        )
 
     def crawl(self) -> bool:
         """获取最新版本的英雄数据并保存到本地。

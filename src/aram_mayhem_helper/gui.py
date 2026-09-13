@@ -17,6 +17,7 @@ from aram_mayhem_helper.utils.config import VALID_SOURCES, get_config, set_data_
 from aram_mayhem_helper.utils.data import get_game_data
 from aram_mayhem_helper.utils.dpi import ensure_per_monitor_dpi_awareness
 from aram_mayhem_helper.utils.log_config import setup_logging
+from aram_mayhem_helper.utils.update_check import UpdateStatus
 from aram_mayhem_helper.utils.window_capture import exclude_window_from_capture
 
 
@@ -132,10 +133,77 @@ def _warmup_ocr() -> None:
     get_ocr_tool().warmup()
 
 
+# ====================== 更新检查（启动/切换数据源时提醒用户更新数据） ======================
+
+# 已检查过的源缓存检查结果，切换数据源回来时不重复请求
+_UPDATE_CHECK_CACHE: dict[str, UpdateStatus] = {}
+
+
+def _check_aramkit_update() -> UpdateStatus:
+    try:
+        return AramkitCrawler().check_update()
+    except Exception as e:
+        logger.warning("aramkit 更新检查异常", exc_info=True)
+        return UpdateStatus(source="aramkit", state="unknown", error=str(e))
+
+
+def _check_ddragon_update() -> UpdateStatus:
+    try:
+        return ChampionCrawler().check_update()
+    except Exception as e:
+        logger.warning("ddragon 更新检查异常", exc_info=True)
+        return UpdateStatus(source="ddragon", state="unknown", error=str(e))
+
+
+def _check_source_update_worker(source: str) -> None:
+    """后台执行：检查指定符文数据源是否有更新（结果经日志桥接输出）。
+
+    结果按源缓存：同一次运行内重复检查同一源不重复发请求；
+    OP.GG 暂无更新检查实现，静默跳过。
+    """
+    if source == "opgg":
+        return
+    cached = _UPDATE_CHECK_CACHE.get(source)
+    if cached is not None:
+        logger.info(cached.message)
+        return
+    status = _check_aramkit_update()
+    _UPDATE_CHECK_CACHE[source] = status
+    logger.info(status.message)
+
+
+def _check_all_updates_worker(source: str) -> None:
+    """后台执行：启动时依次检查英雄数据与默认符文数据源。"""
+    logger.info(_check_ddragon_update().message)
+    _check_source_update_worker(source)
+
+
+def start_update_checks(log_area: scrolledtext.ScrolledText, source: str) -> None:
+    """启动时后台检查英雄数据与默认符文数据源（静默降级，不阻塞窗口）。"""
+    _run_in_background(
+        lambda: _check_all_updates_worker(source),
+        "正在检查数据源更新...",
+        log_area,
+        [],
+        task_name="check",
+    )
+
+
+def start_source_update_check(log_area: scrolledtext.ScrolledText, source: str) -> None:
+    """切换数据源后后台检查新源是否有更新（结果经日志桥接输出）。"""
+    _run_in_background(
+        lambda: _check_source_update_worker(source),
+        f"正在检查数据源更新（{source}）...",
+        log_area,
+        [],
+        task_name="check",
+    )
+
+
 # ====================== 第三步：后台任务（后台线程 + 日志桥接） ======================
 _active_tasks: set[str] = set()
 _pending_reload_callbacks: list[Callable[[], None]] = []
-_TASK_LABELS = {"recognize": "识别", "crawl": "爬取"}
+_TASK_LABELS = {"recognize": "识别", "crawl": "爬取", "check": "更新检查"}
 
 
 def _poll_log_queue(
@@ -442,6 +510,8 @@ def _build_control_area(
         try:
             set_data_source(new_source)
             print_log(f"数据源已切换并持久化: {new_source}", log_area)
+            # 切换后顺带检查新数据源是否有更新（后台线程，结果走日志区）
+            start_source_update_check(log_area, new_source)
         except (ValueError, OSError) as e:
             print_log(f"数据源切换失败: {e}（已恢复原设置）", log_area)
             source_var.set(get_config().data_source.source)  # 失败时单例未重建，仍是旧值
@@ -535,6 +605,9 @@ def create_gui() -> None:
 
     # 初始化日志
     print_log("GUI已启动，等待执行操作...", log_area)
+
+    # 启动时后台检查数据源更新（英雄数据 + 默认符文数据源），结果输出到日志区
+    start_update_checks(log_area, get_config().data_source.source)
 
     # 后台预热 PaddleOCR 模型：首次初始化需数秒，预热后首次识别不再卡顿（静默执行）
     threading.Thread(target=_warmup_ocr, daemon=True).start()

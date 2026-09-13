@@ -69,7 +69,8 @@ src/aram_mayhem_helper/
     ├── aramkit.py      # convert_augment_records + version_sort_key + AramkitResources(dir)
     ├── retry.py        # Typed exponential-backoff retry decorator
     ├── log_config.py   # Root logger setup (console + file)
-    └── text_normalization.py  # OCR text cleanup: dash variants (— → -) etc.
+    ├── text_normalization.py  # OCR text cleanup: dash variants (— → -) etc.
+    └── update_check.py  # UpdateStatus frozen dataclass + user-facing message (check logic lives in crawler.check_update())
 tests/                  # pytest: 241 tests + fixtures/ (synthetic data mirroring disk layout)
 ```
 
@@ -100,6 +101,7 @@ Layering: entry points (cli/gui/web) → algorithm → utils/crawlers. Dependenc
 - **GameData.reload()** clears all caches (champion metadata, entries, translation table, aramkit resources) — GUI calls it after crawls.
 - **pipeline tolerances (intentional unification)**: single-item level groups (zero variance → `ValueError`/`ZeroDivisionError`) are logged and skipped, not raised; lookup-miss entries are dropped entirely (legacy Suggest kept them in `champion_augment_data`).
 - **OCR screen regions** are module constants `REGIONS` in `ocr/ocr_tool.py` as percentage tuples; `region_to_pixel()` converts. Update if the game UI changes.
+- **Update check**（GUI 启动/切换数据源时）: `AramkitCrawler.check_update()` / `ChampionCrawler.check_update()` return `UpdateStatus`（`utils/update_check.py`）. Both are read-only — `fetch_remote_versions()` was extracted from `discover_versions()` so checks never write `version.json`. OP.GG has no version metadata, so `check_update` is not implemented there; GUI skips it.
 - **`Suggest.__init__`** takes `(champion_id, data: GameData, *, source, thresholds: SuggestConfig)` — thresholds are instance data, never read from config at import.
 - **`config.toml`** contains thresholds controlling recommendations and the `[ocr] debug_save_captures` debug switch (see README); dead `[team_analysis]` section was removed (feature never merged).
 - **Dependencies**: base = flask/numpy(<2.0)/requests; `[ocr]` extra = paddleocr/paddlepaddle/Pillow/screeninfo/setuptools. Web deploy installs the base package only.
