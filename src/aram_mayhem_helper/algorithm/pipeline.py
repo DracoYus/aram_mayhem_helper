@@ -7,6 +7,21 @@ from typing import Any
 from aram_mayhem_helper.algorithm.scoring import add_bayesian_sigmoid_score_attr, add_unit_scale_attr
 
 
+def is_valid_entry(item: dict[str, Any]) -> bool:
+    """条目过滤谓词（pipeline 过滤规则的唯一权威定义）。
+
+    无效条件：
+    - 缺 ``performance``/``popular``
+    - ``popular == 0``
+    - 缺 ``id``
+    """
+    if item.get("performance") is None or item.get("popular") is None:
+        return False
+    if item.get("popular") == 0:
+        return False
+    return item.get("id") is not None
+
+
 def build_scored_groups(
     entries: list[dict[str, Any]],
     *,
@@ -16,13 +31,10 @@ def build_scored_groups(
     assign_rank: bool = True,
     champion_id: str | None = None,
     logger: logging.Logger | None = None,
-) -> list[tuple[str, list[dict[str, Any]]]]:
-    """过滤/分组/打分流水线。
+) -> tuple[list[tuple[str, list[dict[str, Any]]]], list[dict[str, Any]]]:
+    """过滤/分组/打分流水线（不变异调用方数据）。
 
-    过滤规则（统一采用 web 的容错行为，与旧 Suggest 的差异见下）：
-    - 缺 ``performance``/``popular`` → WARNING 并跳过
-    - ``popular == 0`` → 跳过
-    - 缺 ``id`` → WARNING 并跳过
+    过滤规则见 :func:`is_valid_entry`，另有：
     - ``lookup`` 未命中 → 跳过（旧 Suggest 会将其留在 ``champion_augment_data`` 中，
       统一后不再保留，属有意行为统一）
 
@@ -31,7 +43,7 @@ def build_scored_groups(
     统一为 web 的容错行为）。
 
     Args:
-        entries: 原始符文条目（来自 GameData.augment_entries）
+        entries: 原始符文条目（来自 GameData.augment_entries），不会被修改
         lookup: 源感知的 augment_info 解析函数（``str(augment_id) → {"name", "level"}``）
         tau_factor: 贝叶斯收缩参数
         sigmoid_steepness: sigmoid 陡峭度
@@ -41,28 +53,29 @@ def build_scored_groups(
         logger: 日志器
 
     Returns:
-        [(level, items)]，按 level 首次出现顺序
+        (groups, scored)：groups 为 [(level, items)] 按 level 首次出现顺序（打分失败的组
+        保留但无 weighted_sum）；scored 为打分成功的条目副本，按文件顺序排列
     """
     log = logger or logging.getLogger(__name__)
     filtered: list[dict[str, Any]] = []
     for item in entries:
-        perf = item.get("performance")
-        pop = item.get("popular")
-        if perf is None or pop is None:
-            log.warning(f"英雄id:{champion_id}，符文数据项缺少 performance/popular 字段: {item}")
+        if not is_valid_entry(item):
+            if item.get("performance") is None or item.get("popular") is None:
+                log.warning(f"英雄id:{champion_id}，符文数据项缺少 performance/popular 字段: {item}")
+            elif item.get("id") is None:
+                log.warning(f"英雄id:{champion_id}，符文数据项缺少 'id' 字段: {item}")
             continue
-        if pop == 0:
-            continue
-        item_id = item.get("id")
-        if item_id is None:
-            log.warning(f"英雄id:{champion_id}，符文数据项缺少 'id' 字段: {item}")
-            continue
+        item_id = item["id"]
         augment_info = lookup(str(item_id))
         if not augment_info:
             continue
-        item["level"] = augment_info.get("level", "?")
-        item["name"] = augment_info.get("name") or f"ID:{item_id}"
-        filtered.append(item)
+        filtered.append(
+            {
+                **item,
+                "level": augment_info.get("level", "?"),
+                "name": augment_info.get("name") or f"ID:{item_id}",
+            }
+        )
 
     by_level: dict[str, list[dict[str, Any]]] = {}
     for item in filtered:
@@ -83,7 +96,7 @@ def build_scored_groups(
                 pop_display_attr="popular_norm",
             )
         except (KeyError, TypeError, ValueError, ZeroDivisionError) as e:
-            # ZeroDivisionError：单元素组 unit 化后 popular 权重全 0，numpy 加权平均抛错
+            # ZeroDivisionError：单元素组 unit 化后 pop 权重全 0，numpy 加权平均抛错
             log.warning(f"英雄 {champion_id} 等级 {level} 的符文数据归一化失败: {e}")
             continue
         if assign_rank:
@@ -93,4 +106,6 @@ def build_scored_groups(
                 item["rank"] = idx + 1
                 item["group_size"] = len(sorted_items)
 
-    return [(level, items) for level, items in by_level.items()]
+    groups = [(level, items) for level, items in by_level.items()]
+    scored = [item for item in filtered if "weighted_sum" in item]
+    return groups, scored

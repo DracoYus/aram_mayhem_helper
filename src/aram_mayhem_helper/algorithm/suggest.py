@@ -40,7 +40,7 @@ class Suggest:
         self.champion_augment_data: list[dict[str, Any]] = []
         self.augment_group: dict[str, dict[str, Any]] = {}
         self._by_id: dict[str, dict[str, Any]] = {}  # id → item（O(1) 反查索引）
-        groups = build_scored_groups(
+        groups, _scored = build_scored_groups(
             entries,
             lookup=lambda augment_id: data.augment_info(augment_id),
             tau_factor=thresholds.shrinkage_tau_factor,

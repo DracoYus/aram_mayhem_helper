@@ -6,7 +6,7 @@ import re
 from functools import lru_cache
 from typing import Any
 
-from aram_mayhem_helper.algorithm.pipeline import build_scored_groups
+from aram_mayhem_helper.algorithm.pipeline import build_scored_groups, is_valid_entry
 from aram_mayhem_helper.utils.config import get_config
 from aram_mayhem_helper.utils.data import GameData
 
@@ -89,7 +89,7 @@ def build_champion_augments(game_data: GameData, champion_id: str, source: str |
         return []
 
     config = get_config()
-    build_scored_groups(
+    _, scored = build_scored_groups(
         entries,
         lookup=lambda augment_id: game_data.augment_info(augment_id),
         tau_factor=config.suggest.shrinkage_tau_factor,
@@ -102,19 +102,10 @@ def build_champion_augments(game_data: GameData, champion_id: str, source: str |
     # 显示尺度统一：aramkit 原生 0~1（winRate/pickRate），×100 与 OP.GG 的 0-100 一致
     display_scale = 100 if source == "aramkit" else 1
     rows: list[dict[str, Any]] = []
-    for entry in entries:
-        perf = entry.get("performance")
-        pop = entry.get("popular")
-        if perf is None or pop is None:
-            continue
-        if pop == 0:
-            continue
-        item_id = entry.get("id")
-        if item_id is None:
-            continue
-        # 未通过过滤/打分（lookup miss、打分失败组）→ 不返回
-        if "weighted_sum" not in entry:
-            continue
+    for entry in scored:
+        item_id = entry["id"]
+        perf = entry["performance"]
+        pop = entry["popular"]
         rows.append(
             {
                 "champion_id": champion_id,
@@ -151,11 +142,7 @@ def build_champion_list(game_data: GameData, source: str | None = None) -> list[
         try:
             entries = game_data.augment_entries(cid, source)
             if entries:
-                count = sum(
-                    1
-                    for e in entries
-                    if e.get("performance") is not None and e.get("popular", 0) != 0 and e.get("id") is not None
-                )
+                count = sum(1 for e in entries if is_valid_entry(e))
         except Exception:
             count = 0
         champions.append(
