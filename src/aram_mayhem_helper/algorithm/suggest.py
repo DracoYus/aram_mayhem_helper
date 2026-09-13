@@ -8,6 +8,11 @@ from aram_mayhem_helper.algorithm.pipeline import build_scored_groups
 from aram_mayhem_helper.utils.config import SuggestConfig
 from aram_mayhem_helper.utils.data import GameData
 
+# 推荐等级文案（get_suggest_info 输出前缀；注意「垃圾符文」后是半角冒号，历史行为）
+_IMMEDIATE_SELECT_LABEL = "快选符文："
+_CONSIDER_SELECT_LABEL = "考虑符文："
+_REJECT_LABEL = "垃圾符文: "
+
 
 class Suggest:
     """对单个英雄的符文数据进行打分与推荐。
@@ -144,11 +149,11 @@ class Suggest:
             consider_select_rank_threshold = group_size * t.consider_select_percentage_threshold
             message = None
             if rank <= immediate_select_rank_threshold or ws >= t.immediate_select_score_threshold:
-                message = f"快选符文：{name}"
+                message = f"{_IMMEDIATE_SELECT_LABEL}{name}"
             elif rank <= consider_select_rank_threshold or ws >= t.consider_select_score_threshold:
-                message = f"考虑符文：{name}"
+                message = f"{_CONSIDER_SELECT_LABEL}{name}"
             else:
-                message = f"垃圾符文: {name}"
+                message = f"{_REJECT_LABEL}{name}"
             message += f"，{rank}/{group_size}，表现: {perf_norm}，流行度: {pop_norm}"
             result.append(message)
 
