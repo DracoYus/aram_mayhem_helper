@@ -46,7 +46,7 @@ src/aram_mayhem_helper/
 ├── gui.py              # Tkinter GUI (background tasks via queue-bridged threads)
 ├── algorithm/
 │   ├── scoring.py      # add_unit_scale_attr + add_bayesian_sigmoid_score_attr (min-max → Bayesian-sigmoid)
-│   ├── pipeline.py     # build_scored_groups(): filter → group by level → score (shared by Suggest & web)
+│   ├── pipeline.py     # build_scored_groups(): is_valid_entry filter → group by level → score → (groups, scored) (shared by Suggest & web)
 │   ├── suggest.py      # Suggest engine: instance-injected thresholds + GameData
 │   └── recommend_flow.py  # run_recommend(): shared CLI/GUI flow (champion → source → OCR → suggestions)
 ├── crawlers/
@@ -54,6 +54,7 @@ src/aram_mayhem_helper/
 │   ├── ddragon/champion_crawler.py
 │   ├── opgg/aram_augment_crawler.py
 │   └── aramkit/aramkit_crawler.py  # version discovery from homepage HTML
+│   └── aramkit/version_state.py    # VersionState: version.json read/write, resume progress, skip checks
 ├── league_client_api/
 │   └── live_data.py    # Reads current game state from League Client (localhost:2999)
 ├── ocr/
@@ -94,7 +95,7 @@ Layering: entry points (cli/gui/web) → algorithm → utils/crawlers. Dependenc
 
 ## Important Details
 
-- **Config is frozen dataclasses**: `load_config()` supports env `ARAM_MAYHEM_CONFIG_DIR`/`ARAM_MAYHEM_DATA_DIR` (required for Docker, where `parents[3]` resolves to site-packages). The old `Config`/`config` compat shim still exists in `utils/config.py` — migrate remaining callers off it when touched.
+- **Config is frozen dataclasses**: `load_config()` supports env `ARAM_MAYHEM_CONFIG_DIR`/`ARAM_MAYHEM_DATA_DIR` (required for Docker, where `parents[3]` resolves to site-packages).
 - **No import-time side effects**: `get_game_data()`/`get_config()`/`get_ocr_tool()` are lazy singletons; paddle/PIL/screeninfo import inside methods. Importing `aram_mayhem_helper.cli` must not load PaddleOCR.
 - **GameData.reload()** clears all caches (champion metadata, entries, translation table, aramkit resources) — GUI calls it after crawls.
 - **pipeline tolerances (intentional unification)**: single-item level groups (zero variance → `ValueError`/`ZeroDivisionError`) are logged and skipped, not raised; lookup-miss entries are dropped entirely (legacy Suggest kept them in `champion_augment_data`).

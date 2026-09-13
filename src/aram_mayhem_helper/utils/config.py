@@ -104,7 +104,6 @@ class AppConfig:
     project_root: Path
     data_dir: Path
     config_path: Path
-    raw: dict[str, Any]  # 原始 TOML，供旧 Config 兼容层嵌套查询
 
     @property
     def champion_dir(self) -> Path:
@@ -258,7 +257,6 @@ def load_config(*, config_path: Path | None = None, data_dir: Path | None = None
         project_root=_DEFAULT_REPO_ROOT,
         data_dir=data_dir,
         config_path=config_path,
-        raw=raw,
     )
     return app
 
