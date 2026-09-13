@@ -1,4 +1,5 @@
 import contextvars
+import ctypes
 import logging
 import queue
 import threading
@@ -17,6 +18,7 @@ from aram_mayhem_helper.utils.config import VALID_SOURCES, get_config, set_data_
 from aram_mayhem_helper.utils.data import get_game_data
 from aram_mayhem_helper.utils.dpi import ensure_per_monitor_dpi_awareness
 from aram_mayhem_helper.utils.log_config import setup_logging
+from aram_mayhem_helper.utils.window_capture import exclude_window_from_capture
 
 
 # ====================== 第一步：定义日志输出函数（核心） ======================
@@ -395,10 +397,25 @@ def create_gui() -> None:
     win_w = max(600, min(int(600 * scale), int(phys_w * 0.85)))
     win_h = max(380, min(int(380 * scale), int(phys_h * 0.85)))
 
+    # 默认位置：屏幕居中
     x = (phys_w - win_w) // 2
     y = (phys_h - win_h) // 2
     root.geometry(f"{win_w}x{win_h}+{x}+{y}")
     root.minsize(600, 380)
+
+    def _apply_capture_exclusion() -> None:
+        """窗口映射后把主窗从屏幕截图中排除（见 utils/window_capture.py）。
+
+        必须等 Tk 顶层包装窗口真正创建/映射后调用：过早调用时
+        GetParent(winfo_id()) 返回 0（实测日志："窗口句柄 0x0 无效"），
+        排除不生效，工具窗仍会被拍进 OCR 截图。after_idle 在首个事件
+        循环迭代即触发，仍早于映射，因此这里用 wait_visibility 阻塞
+        等待窗口可见（在 mainloop 启动前调用是 Tk 的标准用法）。
+        """
+        root.wait_visibility()
+        exclude_window_from_capture(ctypes.windll.user32.GetParent(root.winfo_id()))
+
+    _apply_capture_exclusion()
 
     # 字体：负数点数字号绕过 Tk 的 DPI 换算，直接按像素解释，与窗口同一系数
     # 缩放，保证跨屏比例一致（正数点数会被 Tk 按显示器 DPI 二次换算，造成
