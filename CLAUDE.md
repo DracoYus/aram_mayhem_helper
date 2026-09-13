@@ -47,9 +47,10 @@ src/aram_mayhem_helper/
 ├── algorithm/
 │   ├── scoring.py      # add_unit_scale_attr + add_bayesian_sigmoid_score_attr (min-max → Bayesian-sigmoid)
 │   ├── pipeline.py     # build_scored_groups(): filter → group by level → score (shared by Suggest & web)
-│   └── suggest.py      # Suggest engine: instance-injected thresholds + GameData
+│   ├── suggest.py      # Suggest engine: instance-injected thresholds + GameData
+│   └── recommend_flow.py  # run_recommend(): shared CLI/GUI flow (champion → source → OCR → suggestions)
 ├── crawlers/
-│   ├── base.py         # BaseCrawler: session / fetch_json / save_to_file / crawl_and_save
+│   ├── base.py         # BaseCrawler: session / fetch_json / save_to_file / crawl_and_save / batch_crawl_ids (shared loop + consecutive-failure abort)
 │   ├── ddragon/champion_crawler.py
 │   ├── opgg/aram_augment_crawler.py
 │   └── aramkit/aramkit_crawler.py  # version discovery from homepage HTML
@@ -68,7 +69,7 @@ src/aram_mayhem_helper/
     ├── retry.py        # Typed exponential-backoff retry decorator
     ├── log_config.py   # Root logger setup (console + file)
     └── text_normalization.py  # OCR text cleanup: dash variants (— → -) etc.
-tests/                  # pytest: 144 tests + fixtures/ (synthetic data mirroring disk layout)
+tests/                  # pytest: 241 tests + fixtures/ (synthetic data mirroring disk layout)
 ```
 
 Layering: entry points (cli/gui/web) → algorithm → utils/crawlers. Dependencies point downward only.
@@ -103,5 +104,5 @@ Layering: entry points (cli/gui/web) → algorithm → utils/crawlers. Dependenc
 - **Dependencies**: base = flask/numpy(<2.0)/requests; `[ocr]` extra = paddleocr/paddlepaddle/Pillow/screeninfo/setuptools. Web deploy installs the base package only.
 - **Augment name↔ID↔level lookup**: `data/aramkit/resources/{version}/augments.json` (auto-downloaded by the aramkit crawler, follows game updates) takes **precedence**; `data/augment_trans.json` (manually maintained) only fills entries aramkit doesn't cover. Both go through the same OCR-tolerant `normalize_for_lookup` normalization. `GameData.augment_id`/`augment_info` are source-agnostic (opgg/aramkit share the same augment ID namespace).
 - **Two data sources coexist independently**: OP.GG (`data/opgg/aram_augments/`) and aramkit (`data/aramkit/aram_augments/{dataset}/`). Default source from `[data_source] source`; the web UI switches via the top-bar dropdown / `?source=` param. Both sources are min-max scaled to [0,1] per level group before Bayesian-sigmoid scoring, so scores are directly comparable. aramkit `winRate`/`pickRate` are 0~1 decimals; OP.GG values are 0-100 — no field-level isomorphism.
-- **Tests**: pytest (144 tests) with synthetic fixtures in `tests/fixtures/`; coverage gate ≥80% excluding `gui.py`/`ocr_tool.py`; mypy strict + ruff (E/F/I, line-length 120).
+- **Tests**: pytest (241 tests) with synthetic fixtures in `tests/fixtures/`; coverage gate ≥80% excluding `gui.py`/`ocr_tool.py`; mypy strict + ruff (E/F/I, line-length 120).
 - **Console scripts**: `aram-mayhem-helper` (primary) and `main` (deprecated alias) both point to `cli:cli_main`.
