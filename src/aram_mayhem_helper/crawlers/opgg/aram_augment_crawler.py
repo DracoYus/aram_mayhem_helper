@@ -1,7 +1,6 @@
 """OP.GG 英雄符文数据爬虫。"""
 
 import logging
-import time
 
 from aram_mayhem_helper.crawlers.base import BaseCrawler
 from aram_mayhem_helper.utils.config import AppConfig, get_config
@@ -38,28 +37,9 @@ class AramAugmentCrawler(BaseCrawler):
             包含每个英雄爬取结果的字典，键为英雄ID，值为爬取结果
         """
         self.logger.info(f"开始批量爬取英雄ID范围: {start_id} - {end_id}")
-        results: dict[str, bool] = {}
-        failed_ids: list[int] = []
-        fail_count = 0
-
         champion_id_list = [int(champion_id) for champion_id in get_game_data().champion_ids()]
-        for champion_id in champion_id_list:
-            if champion_id < start_id or champion_id > end_id:
-                continue
-            url = self.base_url.format(champion_id)
-            filename = f"{champion_id}"
-            results[filename] = self.crawl_and_save(url, filename)
-            if not results[filename]:
-                failed_ids.append(champion_id)
-                fail_count += 1
-            if fail_count >= 10:
-                self.logger.warning(f"连续{fail_count}个英雄ID爬取失败，已停止爬取")
-                break
-            time.sleep(self.delay_second)
-        self.logger.info(
-            f"批量爬取完成，共成功 {len(results) - fail_count} 个英雄；共失败 {fail_count} 个英雄ID: {failed_ids}"
-        )
-        return results
+        in_range = [champion_id for champion_id in champion_id_list if start_id <= champion_id <= end_id]
+        return self.batch_crawl_ids(in_range, url_for=lambda champion_id: self.base_url.format(champion_id))
 
 
 if __name__ == "__main__":

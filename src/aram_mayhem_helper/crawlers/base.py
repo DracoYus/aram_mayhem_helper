@@ -3,12 +3,17 @@
 import json
 import logging
 import os
+import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
 import requests
 
 from aram_mayhem_helper.utils.retry import retry_on_exception
+
+# 批量爬取时连续失败的最大英雄数（达到即中止，避免盲目请求）
+MAX_CONSECUTIVE_FAILURES = 10
 
 
 class BaseCrawler:
@@ -120,3 +125,48 @@ class BaseCrawler:
             return self.save_to_file(data, filename)
         self.logger.error(f"未能从 {url} 获取有效数据")
         return False
+
+    def batch_crawl_ids(
+        self,
+        champion_ids: Sequence[int],
+        *,
+        url_for: Callable[[int], str],
+        on_success: Callable[[int], None] | None = None,
+    ) -> dict[str, bool]:
+        """按英雄 ID 顺序批量爬取，连续失败达到阈值即中止。
+
+        opgg/aramkit 两个爬虫共享的循环骨架：逐个英雄请求并保存，成功时
+        重置连续失败计数并触发 ``on_success`` 回调（aramkit 用它持久化
+        断点续爬进度），连续失败达到 :data:`MAX_CONSECUTIVE_FAILURES` 记
+        WARNING 并停止。
+
+        Args:
+            champion_ids: 按序爬取的英雄 ID 列表
+            url_for: 英雄 ID → 目标 URL
+            on_success: 单个英雄成功后的回调（可选）
+
+        Returns:
+            键为英雄 ID 字符串、值为爬取结果的字典
+        """
+        results: dict[str, bool] = {}
+        failed_ids: list[int] = []
+        consecutive_failures = 0
+        for champion_id in champion_ids:
+            filename = str(champion_id)
+            results[filename] = self.crawl_and_save(url_for(champion_id), filename)
+            if results[filename]:
+                if on_success is not None:
+                    on_success(champion_id)
+                consecutive_failures = 0
+            else:
+                failed_ids.append(champion_id)
+                consecutive_failures += 1
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                self.logger.warning(f"连续{consecutive_failures}个英雄ID爬取失败，已停止爬取")
+                break
+            time.sleep(self.delay_second)
+        fail_count = len(failed_ids)
+        self.logger.info(
+            f"批量爬取完成，共成功 {len(results) - fail_count} 个英雄；共失败 {fail_count} 个英雄ID: {failed_ids}"
+        )
+        return results

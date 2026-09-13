@@ -12,7 +12,6 @@ import json
 import logging
 import os
 import re
-import time
 from pathlib import Path
 from typing import Any
 
@@ -306,44 +305,33 @@ class AramkitCrawler(BaseCrawler):
             包含每个URL爬取结果的字典，键为英雄ID，值为爬取结果
         """
         self.logger.info(f"开始批量爬取英雄ID范围: {start_id} - {end_id}（数据集: {self.dataset}）")
-        results: dict[str, bool] = {}
-        failed_ids: list[int] = []
-        consecutive_failures = 0
         completed_ids = set(self._resume_completed_ids or ())
         should_persist_progress = self._resume_completed_ids is not None
-
-        for champion_id in self._champion_ids_in_range(start_id, end_id):
-            url = f"{self.data_base_url}{self.data_version}/stats/{self.dataset}/champion-details/{champion_id}.json"
-            filename = f"{champion_id}"
+        champion_ids = self._champion_ids_in_range(start_id, end_id)
+        # 断点续爬：已完成的英雄不再请求，但结果计为 True（crawl 依赖
+        # all(results.values()) 判断全量成功并写入 crawled 完整标记）
+        pending: list[int] = []
+        for champion_id in champion_ids:
             if champion_id in completed_ids:
-                results[filename] = True
-                consecutive_failures = 0
                 self.logger.info(f"英雄ID {champion_id} 已完成，跳过爬取")
-                continue
-
-            results[filename] = self.crawl_and_save(url, filename)
-            if not results[filename]:
-                failed_ids.append(champion_id)
-                consecutive_failures += 1
             else:
-                if should_persist_progress:
-                    completed_ids.add(champion_id)
-                    self._save_progress(
-                        self.data_version,
-                        self.resources_version,
-                        start_id,
-                        end_id,
-                        completed_ids,
-                    )
-                consecutive_failures = 0
-            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                self.logger.warning(f"连续{consecutive_failures}个英雄ID爬取失败，已停止爬取")
-                break
-            time.sleep(self.delay_second)
-        fail_count = sum(1 for succeeded in results.values() if not succeeded)
-        self.logger.info(
-            f"批量爬取完成，共成功 {len(results) - fail_count} 个英雄；共失败 {fail_count} 个英雄ID: {failed_ids}"
+                pending.append(champion_id)
+
+        def _on_success(champion_id: int) -> None:
+            if should_persist_progress:
+                completed_ids.add(champion_id)
+                self._save_progress(self.data_version, self.resources_version, start_id, end_id, completed_ids)
+
+        results = self.batch_crawl_ids(
+            pending,
+            url_for=lambda champion_id: (
+                f"{self.data_base_url}{self.data_version}/stats/{self.dataset}/champion-details/{champion_id}.json"
+            ),
+            on_success=_on_success,
         )
+        for champion_id in champion_ids:
+            if champion_id in completed_ids:
+                results[str(champion_id)] = True
         return results
 
     def _stats_up_to_date(self, previous: dict[str, Any] | None, data_version: str, start_id: int, end_id: int) -> bool:
