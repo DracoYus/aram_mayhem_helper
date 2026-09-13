@@ -3,18 +3,15 @@
 数据版本号（如 ``16.15-20260805-7e30d3443ba1``）内嵌在首页 HTML 中，无 versions API，
 通过正则提取并按游戏版本号取最新。
 
-版本状态文件 ``version.json`` 记录各数据集的完整爬取记录（``crawled`` 字段）和进行中进度
-（``progress.<dataset>.completed_ids``）。服务器版本未变化且完整记录存在时跳过重复爬取；
-中断后根据进度跳过已完成英雄。
+版本状态（version.json 的读取/写入、断点续爬进度、跳过判断）由
+``version_state.VersionState`` 负责；本类只保留 HTTP 爬取与文件保存逻辑。
 """
 
-import json
 import logging
-import os
 import re
 from pathlib import Path
-from typing import Any
 
+from aram_mayhem_helper.crawlers.aramkit.version_state import VersionState
 from aram_mayhem_helper.crawlers.base import BaseCrawler
 from aram_mayhem_helper.utils.aramkit import version_sort_key
 from aram_mayhem_helper.utils.config import AppConfig, get_config
@@ -56,6 +53,7 @@ class AramkitCrawler(BaseCrawler):
         self.data_version = ""
         self.resources_version = ""
         self._resume_completed_ids: set[int] | None = None
+        self._state = VersionState(self.version_file, self.dataset, logging.getLogger(__name__))
         self.logger = logging.getLogger(__name__)
 
     def fetch_text(self, url: str) -> str | None:
@@ -75,68 +73,6 @@ class AramkitCrawler(BaseCrawler):
             self.logger.error(f"请求 {url} 时发生错误: {str(e)}")
             return None
 
-    def _read_cached_versions(self) -> dict[str, Any] | None:
-        """
-        读取本地版本状态文件 version.json（本次运行之前的状态）
-
-        Returns:
-            状态字典（含 data_version/resources_version/crawled/progress），
-            文件缺失或损坏时返回 None
-        """
-        if not self.version_file.exists():
-            return None
-        try:
-            with open(self.version_file, "r", encoding="utf-8") as f:
-                cached = json.load(f)
-        except (json.JSONDecodeError, OSError) as e:
-            self.logger.error(f"读取版本缓存失败: {self.version_file}, 错误: {str(e)}")
-            return None
-        return cached if isinstance(cached, dict) else None
-
-    def _save_versions(
-        self,
-        data_version: str,
-        resources_version: str,
-        crawled: dict[str, Any] | None = None,
-        progress: dict[str, Any] | None = None,
-    ) -> None:
-        """
-        写入版本状态文件 version.json。
-
-        Args:
-            data_version: 数据版本号
-            resources_version: 资源版本号
-            crawled: 各数据集的完整爬取记录；None 时保留同一数据版本的已有记录
-            progress: 各数据集的断点续爬记录；None 时保留同一数据版本的已有记录
-        """
-        cached = self._read_cached_versions() or {}
-        same_data_version = cached.get("data_version") == data_version
-        if crawled is None:
-            existing = cached.get("crawled")
-            crawled = existing if same_data_version and isinstance(existing, dict) else {}
-        if progress is None:
-            existing = cached.get("progress")
-            progress = existing if same_data_version and isinstance(existing, dict) else {}
-        state = {
-            "data_version": data_version,
-            "resources_version": resources_version,
-            "crawled": crawled,
-            "progress": progress,
-        }
-        temporary_file = self.version_file.with_name(f".{self.version_file.name}.tmp")
-        try:
-            self.version_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(temporary_file, "w", encoding="utf-8") as f:
-                json.dump(state, f, ensure_ascii=False, indent=2)
-            os.replace(temporary_file, self.version_file)
-        except (OSError, TypeError, ValueError) as e:
-            self.logger.error(f"保存版本信息失败: {self.version_file}, 错误: {str(e)}")
-        finally:
-            try:
-                temporary_file.unlink(missing_ok=True)
-            except OSError as e:
-                self.logger.warning(f"清理版本临时文件失败: {temporary_file}, 错误: {str(e)}")
-
     def discover_versions(self) -> tuple[str, str]:
         """
         从首页 HTML 中发现最新数据/资源版本号，并写入 version.json。
@@ -155,14 +91,14 @@ class AramkitCrawler(BaseCrawler):
                 data_version = max(set(data_versions), key=version_sort_key)
                 resources_version = max(set(resources_versions), key=version_sort_key)
                 self.logger.info(f"从首页发现版本: data={data_version}, resources={resources_version}")
-                self._save_versions(data_version, resources_version)
+                self._state.save(data_version, resources_version)
                 return data_version, resources_version
             self.logger.warning(
                 f"首页未发现完整版本信息: data={len(data_versions)}, resources={len(resources_versions)}"
             )
 
         # 回退本地缓存
-        cached = self._read_cached_versions()
+        cached = self._state.read()
         if cached:
             data_version = cached.get("data_version")
             resources_version = cached.get("resources_version")
@@ -226,73 +162,6 @@ class AramkitCrawler(BaseCrawler):
         champion_id_list = [int(champion_id) for champion_id in get_game_data().champion_ids()]
         return [champion_id for champion_id in champion_id_list if start_id <= champion_id <= end_id]
 
-    def _completed_ids_for_progress(
-        self, cached: dict[str, Any] | None, data_version: str, start_id: int, end_id: int
-    ) -> set[int] | None:
-        """读取与当前数据版本、数据集和范围匹配的已完成英雄 ID。"""
-        if not cached or cached.get("data_version") != data_version:
-            return None
-        progress = cached.get("progress")
-        if not isinstance(progress, dict):
-            return None
-        record = progress.get(self.dataset)
-        if not isinstance(record, dict):
-            return None
-        if record.get("data_version") != data_version:
-            return None
-        if record.get("start_id") != start_id or record.get("end_id") != end_id:
-            return None
-        completed_ids = record.get("completed_ids")
-        if not isinstance(completed_ids, list):
-            return set()
-        return {
-            completed_id
-            for completed_id in completed_ids
-            if isinstance(completed_id, int) and not isinstance(completed_id, bool)
-        }
-
-    def _save_progress(
-        self,
-        data_version: str,
-        resources_version: str,
-        start_id: int,
-        end_id: int,
-        completed_ids: set[int],
-    ) -> None:
-        """保存当前数据集的断点续爬进度，并清除旧的完整标记。"""
-        cached = self._read_cached_versions() or {}
-        same_data_version = cached.get("data_version") == data_version
-        existing_progress = cached.get("progress")
-        progress = dict(existing_progress) if same_data_version and isinstance(existing_progress, dict) else {}
-        progress[self.dataset] = {
-            "data_version": data_version,
-            "start_id": start_id,
-            "end_id": end_id,
-            "completed_ids": sorted(completed_ids),
-        }
-        existing_crawled = cached.get("crawled")
-        crawled = dict(existing_crawled) if same_data_version and isinstance(existing_crawled, dict) else {}
-        crawled.pop(self.dataset, None)
-        self._save_versions(data_version, resources_version, crawled=crawled, progress=progress)
-
-    def _prepare_progress(
-        self,
-        data_version: str,
-        resources_version: str,
-        start_id: int,
-        end_id: int,
-        reset: bool = False,
-    ) -> set[int]:
-        """初始化或恢复当前数据集的断点续爬进度。"""
-        completed_ids = (
-            None
-            if reset
-            else self._completed_ids_for_progress(self._read_cached_versions(), data_version, start_id, end_id)
-        )
-        completed_ids = completed_ids if completed_ids is not None else set()
-        self._save_progress(data_version, resources_version, start_id, end_id, completed_ids)
-        return completed_ids
-
     def batch_crawl(self, start_id: int = 1, end_id: int = 999) -> dict[str, bool]:
         """
         批量爬取多个英雄数据
@@ -320,7 +189,7 @@ class AramkitCrawler(BaseCrawler):
         def _on_success(champion_id: int) -> None:
             if should_persist_progress:
                 completed_ids.add(champion_id)
-                self._save_progress(self.data_version, self.resources_version, start_id, end_id, completed_ids)
+                self._state.save_progress(self.data_version, self.resources_version, start_id, end_id, completed_ids)
 
         results = self.batch_crawl_ids(
             pending,
@@ -333,46 +202,6 @@ class AramkitCrawler(BaseCrawler):
             if champion_id in completed_ids:
                 results[str(champion_id)] = True
         return results
-
-    def _stats_up_to_date(self, previous: dict[str, Any] | None, data_version: str, start_id: int, end_id: int) -> bool:
-        """
-        判断本地英雄数据是否已覆盖当前服务器版本及请求范围
-
-        Args:
-            previous: 本次运行前的 version.json 状态（None 表示无记录）
-            data_version: 服务器当前数据版本号
-            start_id: 起始英雄ID
-            end_id: 结束英雄ID
-
-        Returns:
-            版本一致且本数据集已有相同范围的爬取记录时返回 True
-        """
-        if not previous or previous.get("data_version") != data_version:
-            return False
-        crawled = previous.get("crawled")
-        if not isinstance(crawled, dict):
-            return False
-        record = crawled.get(self.dataset)
-        return isinstance(record, dict) and record.get("start_id") == start_id and record.get("end_id") == end_id
-
-    def _record_crawled(self, data_version: str, resources_version: str, start_id: int, end_id: int) -> None:
-        """
-        记录本数据集已完成全量爬取（写入 version.json 的 crawled 字段），供下次运行跳过判断
-
-        Args:
-            data_version: 数据版本号
-            resources_version: 资源版本号
-            start_id: 起始英雄ID
-            end_id: 结束英雄ID
-        """
-        cached = self._read_cached_versions() or {}
-        existing = cached.get("crawled")
-        crawled = dict(existing) if isinstance(existing, dict) else {}
-        crawled[self.dataset] = {"start_id": start_id, "end_id": end_id}
-        existing_progress = cached.get("progress")
-        progress = dict(existing_progress) if isinstance(existing_progress, dict) else {}
-        progress.pop(self.dataset, None)
-        self._save_versions(data_version, resources_version, crawled=crawled, progress=progress)
 
     def crawl(self, start_id: int = 1, end_id: int = 999, *, force: bool = False) -> bool:
         """
@@ -389,13 +218,13 @@ class AramkitCrawler(BaseCrawler):
         Returns:
             全部成功（含跳过）返回True，存在失败返回False
         """
-        previous = self._read_cached_versions()
+        previous = self._state.read()
         data_version, resources_version = self.discover_versions()
         self.data_version = data_version
         self.resources_version = resources_version
-        has_progress = self._completed_ids_for_progress(previous, data_version, start_id, end_id) is not None
-        stats_up_to_date = (
-            not force and not has_progress and self._stats_up_to_date(previous, data_version, start_id, end_id)
+        has_progress = self._state.completed_ids_for(previous, data_version, start_id, end_id) is not None
+        stats_up_to_date = not force and not has_progress and self._state.stats_up_to_date(
+            previous, data_version, start_id, end_id
         )
 
         if self._resources_exist(resources_version):
@@ -408,7 +237,7 @@ class AramkitCrawler(BaseCrawler):
             self.logger.info(f"服务器数据无更新（{data_version}），跳过英雄数据爬取")
             return True
 
-        self._resume_completed_ids = self._prepare_progress(
+        self._resume_completed_ids = self._state.prepare_progress(
             data_version, resources_version, start_id, end_id, reset=force
         )
         try:
@@ -416,7 +245,7 @@ class AramkitCrawler(BaseCrawler):
         finally:
             self._resume_completed_ids = None
         if results and all(results.values()):
-            self._record_crawled(data_version, resources_version, start_id, end_id)
+            self._state.record_crawled(data_version, resources_version, start_id, end_id)
         # 空结果（如英雄数据尚未抓取）不算成功：all({}) 恒为 True 会误报
         return bool(results) and all(results.values())
 
