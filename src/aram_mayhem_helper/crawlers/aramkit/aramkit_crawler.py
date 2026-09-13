@@ -22,12 +22,11 @@ from aram_mayhem_helper.utils.config import AppConfig, get_config
 from aram_mayhem_helper.utils.data import get_game_data
 
 # 数据版本: 16.15-20260805-7e30d3443ba1（游戏版本-日期-哈希）
-DATA_VERSION_RE = re.compile(r"16\.\d+-\d{8}-[a-f0-9]{12}")
-# 资源版本: 16.15-459bb2367aac（与数据版本正则互斥，不会交叉误匹配）
-RESOURCES_VERSION_RE = re.compile(r"16\.\d+-[a-f0-9]{12}")
-
-# 批量爬取时连续失败的最大英雄数（达到即中止，避免盲目请求）
-MAX_CONSECUTIVE_FAILURES = 10
+DATA_VERSION_RE = re.compile(r"\d+\.\d+-\d{8}-[a-f0-9]{12}")
+# 资源版本: 16.15-459bb2367aac（游戏版本-哈希）
+# 两者互斥：数据版本横杠后是 8 位日期段（凑不满 12 位哈希），资源版本横杠后
+# 直接是 12 位十六进制哈希，不会交叉误匹配
+RESOURCES_VERSION_RE = re.compile(r"\d+\.\d+-[a-f0-9]{12}")
 
 
 class AramkitCrawler(BaseCrawler):
