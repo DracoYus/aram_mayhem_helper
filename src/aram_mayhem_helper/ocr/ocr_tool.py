@@ -157,8 +157,17 @@ class OCRTool:
 
     @property
     def screen_size(self) -> tuple[int, int]:
-        """主显示器尺寸 (width, height)，懒查询。"""
+        """主显示器尺寸 (width, height)，懒查询。
+
+        screeninfo 的 Windows 枚举器会调用 ``SetProcessDpiAwareness(2)`` 抢改
+        进程 DPI 感知级别（GUI 已在窗口创建前声明过则此调用无害失败）。这里
+        先声明一次，保证 GUI 之外的入口（脚本/测试）先查屏幕也不会让进程
+        中途改变感知级别。
+        """
         if self._screen_size is None:
+            from aram_mayhem_helper.utils.dpi import ensure_per_monitor_dpi_awareness
+
+            ensure_per_monitor_dpi_awareness()
             from screeninfo import get_monitors
 
             monitor = get_monitors()[0]

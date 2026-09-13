@@ -1,8 +1,6 @@
 import contextvars
-import ctypes
 import logging
 import queue
-import sys
 import threading
 import time
 import tkinter as tk
@@ -17,6 +15,7 @@ from aram_mayhem_helper.league_client_api.live_data import get_current_champion_
 from aram_mayhem_helper.ocr.ocr_tool import get_ocr_tool, save_unrecognized_capture
 from aram_mayhem_helper.utils.config import VALID_SOURCES, get_config, set_data_source
 from aram_mayhem_helper.utils.data import get_game_data
+from aram_mayhem_helper.utils.dpi import ensure_per_monitor_dpi_awareness
 from aram_mayhem_helper.utils.log_config import setup_logging
 
 
@@ -52,19 +51,6 @@ class _HideCrawlerProgressFilter(logging.Filter):
             f"{_CRAWLER_LOGGER_PREFIX}."
         )
         return not is_crawler_logger or record.levelno >= logging.WARNING
-
-
-def _enable_dpi_awareness() -> None:
-    """Enable system DPI awareness on Windows to prevent blurry bitmap scaling.
-
-    Must be called **before** ``tk.Tk()`` is created.
-    """
-    if sys.platform != "win32":
-        return
-    try:
-        ctypes.windll.user32.SetProcessDPIAware()
-    except Exception:
-        pass
 
 
 def _scaled(value: int, factor: float) -> int:
@@ -386,45 +372,42 @@ def fetch_augment_data(
 
 # ====================== 第四步：创建完整GUI（按钮+日志区域） ======================
 def create_gui() -> None:
-    _enable_dpi_awareness()
+    # 进程 DPI 感知必须先于 Tk() 声明：否则进程为 unaware，Windows 把高 DPI 屏
+    # 虚拟化后整窗位图拉伸（文字模糊）；且 OCR 的 screeninfo 会在运行中途调用
+    # SetProcessDpiAwareness(2) 抢改感知级别，已打开的窗口会突然"缩回"物理像素。
+    ensure_per_monitor_dpi_awareness()
 
     root = tk.Tk()
     root.title("LOL海克斯乱斗工具")
 
-    # --- DPI-aware sizing ---
-    dpi = root.winfo_fpixels("1i")
-    scale = dpi / 96.0
-
+    # --- 跨屏视觉一致性策略 ---
+    # 问题根源：此前字体按 DPI 系数缩放、窗口按 分辨率/1080 缩放，两套系数在
+    # 不同显示器上各自偏离，导致同一窗口内字体/间距与窗口的比例随屏幕漂移。
+    #
+    # 现方案：统一使用屏幕比例系数 scale = 主屏较短边/1080，窗口、字体、间距
+    # 全部按同一系数缩放。窗口像素尺寸固定后拖到副屏不会重排，任何分辨率的
+    # 显示器上布局比例都与设计稿（600×380 @ 1080p）一致。
     phys_w = root.winfo_screenwidth()
     phys_h = root.winfo_screenheight()
+    scale = min(phys_w, phys_h) / 1080  # 1080 是 FHD 的较短边基准
 
-    # Use the smaller screen dimension as the reference to keep consistent
-    # visual proportions regardless of aspect ratio.
-    ref_dim = min(phys_w, phys_h)
-
-    # Window size: scale a base 800×520 design (at 96 DPI, ~1080p screen)
-    # so the window occupies a similar fraction of the screen at any DPI.
-    base_w, base_h = 600, 380
-    size_scale = ref_dim / 1080  # 1080 is the reference shorter-side at FHD
-    win_w = int(base_w * size_scale)
-    win_h = int(base_h * size_scale)
-
-    # Clamp: never smaller than the base design, never larger than 85 % of screen
-    win_w = max(_scaled(600, scale), min(win_w, int(phys_w * 0.85)))
-    win_h = max(_scaled(300, scale), min(win_h, int(phys_h * 0.85)))
+    # 窗口尺寸：设计稿 600×380 @ 1080p，按比例缩放，钳制到屏幕 85% 以内
+    win_w = max(600, min(int(600 * scale), int(phys_w * 0.85)))
+    win_h = max(380, min(int(380 * scale), int(phys_h * 0.85)))
 
     x = (phys_w - win_w) // 2
     y = (phys_h - win_h) // 2
     root.geometry(f"{win_w}x{win_h}+{x}+{y}")
-    root.minsize(_scaled(600, scale), _scaled(300, scale))
+    root.minsize(600, 380)
 
-    # Font sizes: 基础值按 1080p（100% 缩放）下的可读字号设定，
-    # scale 继续按 DPI 放大高分辨率屏幕的字号。
-    btn_font = ("微软雅黑", max(9, min(round(10 * scale), 16)))
-    label_font = ("微软雅黑", max(8, min(round(9 * scale), 14)))
-    log_font = ("Consolas", max(9, min(round(10 * scale), 16)))
+    # 字体：负数点数字号绕过 Tk 的 DPI 换算，直接按像素解释，与窗口同一系数
+    # 缩放，保证跨屏比例一致（正数点数会被 Tk 按显示器 DPI 二次换算，造成
+    # 字体与窗口比例漂移）。
+    btn_font = ("微软雅黑", -_scaled(14, scale))
+    label_font = ("微软雅黑", -_scaled(12, scale))
+    log_font = ("Consolas", -_scaled(13, scale))
 
-    # Padding
+    # Padding：与窗口同一系数缩放的像素值
     pad_lg = _scaled(20, scale)
     pad_md = _scaled(10, scale)
     pad_sm = _scaled(5, scale)
@@ -529,12 +512,19 @@ def create_gui() -> None:
     log_label = tk.Label(root, text="运行日志：", font=label_font)
     log_label.pack(anchor="w", padx=pad_lg, pady=(pad_sm, 0))
 
+    # wrap=NONE：长行（符文推荐等）不折行，保证一条日志始终在同一行内可读；
+    # 配合底部水平滚动条查看超长行。
     log_area = scrolledtext.ScrolledText(
         root,
         font=log_font,
         state=tk.DISABLED,
+        wrap=tk.NONE,
     )
     log_area.pack(padx=pad_lg, pady=pad_sm, fill=tk.BOTH, expand=True)
+    # ScrolledText 只自带竖向滚动条，水平滚动条需手动附加到其内部 frame
+    hscroll = tk.Scrollbar(log_area.frame, orient=tk.HORIZONTAL, command=log_area.xview)
+    hscroll.pack(side=tk.BOTTOM, fill=tk.X)
+    log_area.config(xscrollcommand=hscroll.set)
 
     # 初始化日志
     print_log("GUI已启动，等待执行操作...", log_area)
