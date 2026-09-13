@@ -3,6 +3,15 @@ import sys
 
 from aram_mayhem_helper.utils.config import get_config
 
+# 文件日志格式（含源码位置；_perf_logger 等自建 FileHandler 复用）
+FILE_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s"
+_LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
+
+
+def file_log_formatter() -> logging.Formatter:
+    """返回文件日志 Formatter（含源码位置），与 setup_logging 的文件 Handler 一致。"""
+    return logging.Formatter(FILE_LOG_FORMAT, datefmt=_LOG_DATEFMT)
+
 
 def setup_logging(
     level: int = logging.DEBUG,
@@ -39,8 +48,5 @@ def setup_logging(
     log_dir.mkdir(exist_ok=True)  # 自动创建 logs 目录
     file_handler = logging.FileHandler(log_dir / log_file, encoding="utf-8")
     file_handler.setLevel(file_level)
-    file_formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-    )
-    file_handler.setFormatter(file_formatter)
+    file_handler.setFormatter(file_log_formatter())
     root_logger.addHandler(file_handler)

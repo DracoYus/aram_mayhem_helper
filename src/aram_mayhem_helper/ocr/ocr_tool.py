@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 
 from aram_mayhem_helper.utils.config import get_config
+from aram_mayhem_helper.utils.log_config import file_log_formatter
 
 # 失败截图文件名中 OCR 文本片段的长度上限
 _MAX_NAME_LENGTH = 30
@@ -75,12 +76,7 @@ def _perf_logger() -> logging.Logger:
         logger.propagate = False
         path = get_config().log_dir / "app.log"
         handler = logging.FileHandler(path, encoding="utf-8")
-        handler.setFormatter(
-            logging.Formatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S",
-            )
-        )
+        handler.setFormatter(file_log_formatter())
         logger.addHandler(handler)
     return logger
 
