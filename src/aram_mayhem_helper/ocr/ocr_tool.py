@@ -270,16 +270,12 @@ class OCRTool:
         delay = _REGION_RETRY_DELAY
         for attempt in range(1, _REGION_MAX_ATTEMPTS + 1):
             image = self.capture_screen((left, top, right, bottom))
-            # 按需扩展到目标长度：get_augments 预分配 None 占位，直接调用（测试）则从空列表增长
-            while len(self._last_captures) <= index:
-                self._last_captures.append(image)
-            self._last_captures[index] = image
             try:
                 return image, self.recognize_text(image)
             except RuntimeError as e:
                 last_error = e
                 self.logger.warning(f"区域{index} 第{attempt}次识别失败: {e}")
-                self._save_capture(index, _OCR_ERROR_CAPTURE_TAG, get_config().ocr_failure_dir)
+                self._save_capture(index, image, _OCR_ERROR_CAPTURE_TAG, get_config().ocr_failure_dir)
                 if attempt < _REGION_MAX_ATTEMPTS:
                     time.sleep(delay)
                     delay *= _REGION_RETRY_BACKOFF
@@ -298,7 +294,6 @@ class OCRTool:
         width, height = self.screen_size
         captures: list[np.ndarray[Any, Any]] = []
         text_list: list[str] = []
-        self._last_captures = [None] * len(REGIONS)  # type: ignore[list-item]
         for idx, region in enumerate(REGIONS):
             _region_start = time.perf_counter()
             image, results = self._recognize_region(idx, region, width, height)
@@ -315,7 +310,7 @@ class OCRTool:
         self._last_captures = captures
         if self.debug_capture_dir is not None:
             saved = sum(
-                self._save_capture(index, text, self.debug_capture_dir) is not None
+                self._save_capture(index, captures[index], text, self.debug_capture_dir) is not None
                 for index, text in enumerate(text_list)
             )
             self.logger.info(f"OCR 调试模式：已保存 {saved}/{len(text_list)} 张区域截图到 {self.debug_capture_dir}")
@@ -338,16 +333,16 @@ class OCRTool:
         Returns:
             保存的 PNG 路径；索引无截图或保存失败时返回 None
         """
-        return self._save_capture(index, ocr_text, directory)
+        if not (0 <= index < len(self._last_captures)):
+            self.logger.warning(f"无法保存区域截图：区域索引 {index} 无对应截图")
+            return None
+        return self._save_capture(index, self._last_captures[index], ocr_text, directory)
 
-    def _save_capture(self, index: int, ocr_text: str, directory: Path) -> Path | None:
+    def _save_capture(self, index: int, image: np.ndarray[Any, Any], ocr_text: str, directory: Path) -> Path | None:
         """保存指定区域截图为 PNG（失败截图与调试模式共用的核心实现）。
 
         保存失败不抛异常，仅记录日志，不影响调用主流程。
         """
-        if not (0 <= index < len(self._last_captures)):
-            self.logger.warning(f"无法保存区域截图：区域索引 {index} 无对应截图")
-            return None
         try:
             directory.mkdir(parents=True, exist_ok=True)
             from PIL import Image
@@ -359,7 +354,7 @@ class OCRTool:
             while path.exists():
                 path = directory / f"{stem}_{counter}.png"
                 counter += 1
-            Image.fromarray(self._last_captures[index]).save(path)
+            Image.fromarray(image).save(path)
         except Exception:
             self.logger.exception("保存区域截图失败")
             return None

@@ -89,7 +89,7 @@ class TestRecognizeRegionRetry:
 
         assert len(captures) == 1
         assert results == [{"text": "x", "confidence": 1.0, "bbox": []}]
-        assert tool._last_captures[0] is image
+        assert image is not None  # 返回本次截图，存储由 get_augments 负责
 
     def test_recaptures_on_failure_then_succeeds(self, monkeypatch, tmp_path) -> None:
         tool = self._tool_with_screen()
@@ -119,7 +119,6 @@ class TestRecognizeRegionRetry:
         assert recognize_count["n"] == 2
         assert results == []
         assert image[0, 0] == 2  # 返回的是第二次（成功）的截图
-        assert tool._last_captures[0] is image
 
     def test_saves_failure_capture_on_first_failure(self, monkeypatch, tmp_path) -> None:
         tool = self._tool_with_screen()
