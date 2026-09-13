@@ -8,12 +8,11 @@ import tkinter as tk
 from collections.abc import Callable
 from tkinter import scrolledtext, ttk
 
-from aram_mayhem_helper.algorithm.suggest import Suggest
+from aram_mayhem_helper.algorithm.recommend_flow import run_recommend
 from aram_mayhem_helper.crawlers.aramkit.aramkit_crawler import AramkitCrawler
 from aram_mayhem_helper.crawlers.ddragon.champion_crawler import ChampionCrawler
 from aram_mayhem_helper.crawlers.opgg.aram_augment_crawler import AramAugmentCrawler
-from aram_mayhem_helper.league_client_api.live_data import get_current_champion_name
-from aram_mayhem_helper.ocr.ocr_tool import get_ocr_tool, save_unrecognized_capture
+from aram_mayhem_helper.ocr.ocr_tool import get_ocr_tool
 from aram_mayhem_helper.utils.config import VALID_SOURCES, get_config, set_data_source
 from aram_mayhem_helper.utils.data import get_game_data
 from aram_mayhem_helper.utils.dpi import ensure_per_monitor_dpi_awareness
@@ -122,45 +121,10 @@ def recognize_augment(
 def _recognize_worker(source: str) -> None:
     """后台执行：识别当前英雄 → OCR 读取符文 → 生成推荐。
 
-    不变式：本函数内的数据源一律显式传入（available_source 的 preferred /
-    Suggest.source），使用 GUI 当前选择而非隐式默认。
+    不变式：数据源一律显式传入（preferred_source 使用 GUI 当前选择
+    而非隐式默认），共享流程内部处理缺数据回退与日志。
     """
-    game_data = get_game_data()
-
-    try:
-        champion_name = get_current_champion_name()
-        if not champion_name:
-            logger.error("无法获取当前英雄名称，请确保游戏正在运行")
-            return
-        champion_id = game_data.champion_id_by_name(champion_name)
-        if not champion_id:
-            logger.error(f"无法找到英雄 '{champion_name}' 对应的ID")
-            return
-        resolved = game_data.available_source(champion_id, preferred=source)
-        if resolved is None:
-            logger.error(f"英雄ID {champion_id} ({champion_name}) 在数据源 {source} 与另一源中都没有符文数据")
-            return
-        if resolved != source:
-            logger.warning(f"数据源 {source} 无该英雄的符文数据，已回退使用 {resolved}")
-        suggest = Suggest(champion_id, game_data, source=resolved, thresholds=get_config().suggest)
-        logger.info(f"当前英雄：{champion_name}（数据源: {resolved}）")
-    except Exception as e:
-        logger.error(f"识别英雄出错：{str(e)}")
-        return
-
-    augments = None
-    try:
-        augments = get_ocr_tool().get_augments()
-        augments_info = suggest.suggest(augments, on_unrecognized=save_unrecognized_capture)
-        if augments_info:
-            for augment_info in augments_info:
-                logger.info(str(augment_info))
-        else:
-            logger.warning("未能生成任何符文建议（OCR 名称未匹配到当前英雄的符文数据）")
-    except Exception as e:
-        logger.error(f"「识别符文」操作出错：{str(e)}")
-        if augments is not None:
-            logger.info(str(augments))
+    run_recommend(get_game_data(), get_ocr_tool(), preferred_source=source)
 
 
 def _warmup_ocr() -> None:

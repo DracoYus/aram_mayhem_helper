@@ -1,13 +1,11 @@
 import argparse
 import logging
 
-from aram_mayhem_helper.algorithm.suggest import Suggest
+from aram_mayhem_helper.algorithm.recommend_flow import run_recommend
 from aram_mayhem_helper.crawlers.aramkit.aramkit_crawler import AramkitCrawler
 from aram_mayhem_helper.crawlers.ddragon.champion_crawler import ChampionCrawler
 from aram_mayhem_helper.crawlers.opgg.aram_augment_crawler import AramAugmentCrawler
-from aram_mayhem_helper.league_client_api.live_data import get_current_champion_name
-from aram_mayhem_helper.ocr.ocr_tool import get_ocr_tool, save_unrecognized_capture
-from aram_mayhem_helper.utils.config import get_config
+from aram_mayhem_helper.ocr.ocr_tool import get_ocr_tool
 from aram_mayhem_helper.utils.data import get_game_data
 from aram_mayhem_helper.utils.log_config import setup_logging
 
@@ -55,36 +53,12 @@ def recommend() -> None:
     截图并推荐（OCR 识别当前对局符文）
     """
     logger.info("开始执行主程序")
-    try:
-        champion_name = get_current_champion_name()
-        if not champion_name:
-            logger.error("无法获取当前英雄名称")
-            return
-
-        game_data = get_game_data()
-        champion_id = game_data.champion_id_by_name(champion_name)
-        if not champion_id:
-            logger.error(f"无法找到英雄名称 '{champion_name}' 对应的ID")
-            return
-
-        source = game_data.available_source(champion_id)
-        if source is None:
-            logger.error(f"英雄ID {champion_id} ({champion_name}) 在 opgg/aramkit 数据源中都没有符文数据")
-            return
-
-        suggest = Suggest(champion_id, game_data, source=source, thresholds=get_config().suggest)
-        arguments = get_ocr_tool().get_augments()
-        results = suggest.suggest(arguments, on_unrecognized=save_unrecognized_capture)
-        if results:
-            for result in results:
-                print(result)
-                logger.info(result)
-        else:
-            logger.warning("未能生成任何符文建议")
-        logger.info("主程序执行完成")
-    except Exception as e:
-        logger.error(f"推荐流程执行出错: {e}")
-        return
+    outcome = run_recommend(get_game_data(), get_ocr_tool())
+    if outcome.lines:
+        for result in outcome.lines:
+            print(result)
+            logger.info(result)
+    logger.info("主程序执行完成")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
