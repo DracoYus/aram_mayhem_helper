@@ -15,14 +15,11 @@ import tkinter as tk
 from collections.abc import Callable
 from ctypes import wintypes
 
-import numpy as np
-from numpy.typing import NDArray
-
 from aram_mayhem_helper.algorithm.recommend_flow import RecommendOutcome, run_recommend
 from aram_mayhem_helper.auto.detection import (
     DetectionThresholds,
     SelectionDetector,
-    content_fingerprint,
+    SelectionState,
     looks_like_selection_ui_stats,
 )
 from aram_mayhem_helper.ocr.ocr_tool import REGIONS
@@ -69,12 +66,10 @@ def is_window_foreground(hwnd: int) -> bool:
     return bool(user32.GetForegroundWindow() == hwnd)
 
 
-def capture_region_stats(hwnd: int) -> tuple[list[tuple[float, float]], NDArray[np.float64]] | None:
-    """按游戏窗口客户区百分比坐标截取 REGIONS 区域。
+def capture_region_stats(hwnd: int) -> list[tuple[float, float]] | None:
+    """按游戏窗口客户区百分比坐标截取 REGIONS 区域，返回各区域灰度 (mean, std)。
 
-    Returns:
-        (各区域灰度 (mean, std), 拼接的内容指纹)；
-        窗口不可用（句柄失效/客户区为空）时返回 None。
+    窗口不可用（句柄失效/客户区为空）时返回 None。
     """
     rect = wintypes.RECT()
     if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
@@ -92,7 +87,6 @@ def capture_region_stats(hwnd: int) -> tuple[list[tuple[float, float]], NDArray[
     from PIL import ImageGrab
 
     stats: list[tuple[float, float]] = []
-    fingerprints: list[NDArray[np.float64]] = []
     for region in REGIONS:
         left = origin_x + int(region[0] * width)
         top = origin_y + int(region[1] * height)
@@ -100,8 +94,7 @@ def capture_region_stats(hwnd: int) -> tuple[list[tuple[float, float]], NDArray[
         bottom = origin_y + int(region[3] * height)
         image = ImageGrab.grab((left, top, right, bottom)).convert("L")
         stats.append(_gray_stats(image))
-        fingerprints.append(content_fingerprint(np.asarray(image)))
-    return stats, np.concatenate(fingerprints)
+    return stats
 
 
 def _gray_stats(image: object) -> tuple[float, float]:
@@ -193,6 +186,7 @@ class AutoWatcher:
         self._detector = SelectionDetector(debounce_count=debounce_count)
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._last_augments: list[str] | None = None  # 上次 OCR 识别文本（reroll 比对基准）
 
     @property
     def is_running(self) -> bool:
@@ -209,6 +203,7 @@ class AutoWatcher:
             return
         self._stop_event.clear()
         self._detector.reset()
+        self._last_augments = None
         self._thread = threading.Thread(target=self._watch_loop, name="auto-watcher", daemon=True)
         self._thread.start()
         logger.info("自动监听已启动（每 %.0f 秒检测一次符文选择界面）", self._poll_interval)
@@ -228,7 +223,7 @@ class AutoWatcher:
             self._stop_event.wait(self._poll_interval)
 
     def _poll_once(self) -> None:
-        """单次轮询：检测 + 按需触发。"""
+        """单次轮询：检测 + 按需触发 + reroll 检测。"""
         hwnd = find_game_window()
         if hwnd is None:
             # 游戏未运行：静默跳过（状态机保持原状，进对局后自然恢复）
@@ -241,14 +236,31 @@ class AutoWatcher:
         stats = capture_region_stats(hwnd)
         if stats is None:
             return
-        region_stats, fingerprint = stats
-        is_selection = looks_like_selection_ui_stats(region_stats, self._thresholds)
-        result = self._detector.feed(is_selection, fingerprint)
-        if self._detector.state.name == "TRIGGERED":
-            # TRIGGERED 下的采样默认静默，记 DEBUG 便于排查 reroll 检测
-            logger.debug("选择界面持续采样中（等待 reroll 或界面消失）")
+        is_selection = looks_like_selection_ui_stats(stats, self._thresholds)
+        result = self._detector.feed(is_selection)
         if result.should_trigger:
             self._trigger_recommendation()
+        elif self._detector.state is SelectionState.TRIGGERED:
+            # 选择界面持续中：用 OCR 文本比对检测 reroll（像素指纹不可靠，
+            # 不同符文名的白字居中布局几乎相同）。OCR 单次 0.2~0.6s。
+            self._check_reroll()
+
+    def _check_reroll(self) -> None:
+        """TRIGGERED 期间跑一次 OCR，识别文本与上次不同 → reroll 重触发。
+
+        只比对符文名（忽略顺序），空结果（动画帧识别不到）不算变化——
+        reroll 动画期间 OCR 常返回空/残缺，等动画结束识别稳定才判定。
+        """
+        from aram_mayhem_helper.ocr.ocr_tool import get_ocr_tool
+
+        augments = get_ocr_tool().get_augments()
+        if not any(augments):
+            logger.debug("reroll 检查：OCR 结果为空（动画帧），跳过")
+            return
+        if self._last_augments is not None and set(augments) != set(self._last_augments):
+            logger.info("检测到符文变更（reroll）: %s -> %s", self._last_augments, augments)
+            self._trigger_recommendation()
+        self._last_augments = augments
 
     def _trigger_recommendation(self) -> None:
         """触发一次完整推荐流程并展示结果（悬浮窗/控制台）。"""
