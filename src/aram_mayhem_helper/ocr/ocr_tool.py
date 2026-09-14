@@ -311,7 +311,9 @@ class OCRTool:
             )
             self.logger.info(f"OCR 调试模式：已保存 {saved}/{len(text_list)} 张区域截图到 {self.debug_capture_dir}")
         _perf_logger().debug(f"get_augments 总耗时: {time.perf_counter() - _total_start:.3f}s | 识别到 {text_list}")
-        self.logger.info(f"识别到符文选项: {text_list}")
+        # DEBUG 而非 INFO：自动监听会对命中像素预筛的暗色 UI（死亡回放/记分板）
+        # 高频调用本方法，其结果多为误读（KDA 数字等），有效结果由调用方按需记录
+        self.logger.debug(f"识别到符文选项: {text_list}")
         return text_list
 
     def save_failure_capture(self, index: int, ocr_text: str, directory: Path) -> Path | None:

@@ -35,6 +35,9 @@ DEFAULT_POLL_INTERVAL_SECONDS = 1.0
 _RESULT_TITLE = "符文推荐"
 # 悬浮窗队列轮询间隔（毫秒）
 _OVERLAY_POLL_MS = 200
+# 误报退避（秒）：像素预筛命中但 OCR 内容非符文（死亡回放/记分板等持续 UI）
+# 时，拉长到该间隔再采样，减少无效 OCR
+_FALSE_POSITIVE_BACKOFF_SECONDS = 3.0
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 
@@ -196,6 +199,8 @@ class AutoWatcher:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_augments: list[str] | None = None  # 上次 OCR 识别文本（reroll 比对基准）
+        self._false_positive_streak = 0  # 连续误报计数（降噪：只记第一条）
+        self._next_ocr_delay = 0.0  # 误报退避：本轮采样后额外等待的秒数
 
     @property
     def is_running(self) -> bool:
@@ -223,13 +228,18 @@ class AutoWatcher:
             self._thread.join(timeout=timeout)
 
     def _watch_loop(self) -> None:
-        """轮询主循环：窗口定位 → 像素预筛 → OCR 确认 → 触发。"""
+        """轮询主循环：窗口定位 → 像素预筛 → OCR 确认 → 触发。
+
+        误报退避：像素预筛命中但内容非符文（死亡回放等持续 UI）时，
+        本轮等待时间拉长为轮询间隔 + 退避秒数。
+        """
         while not self._stop_event.is_set():
             try:
                 self._poll_once()
             except Exception:
                 logger.exception("自动监听单次轮询异常，继续下一轮")
-            self._stop_event.wait(self._poll_interval)
+            self._stop_event.wait(self._poll_interval + self._next_ocr_delay)
+            self._next_ocr_delay = 0.0  # 退避只生效一轮
 
     def _poll_once(self) -> None:
         """单次轮询：像素预筛 → OCR 内容确认 → 触发 / reroll 检测。
@@ -267,9 +277,17 @@ class AutoWatcher:
             logger.debug("碎片界面（正常游戏流程），跳过")
             return
         if not self._has_known_augment(augments):
-            # 记分板 KDA / 其他暗色 UI：OCR 文本查表全部失败 → 非符文选择界面
-            logger.debug("OCR 文本均非已知符文（%s），判定为其他 UI，跳过", augments)
+            # 记分板 KDA / 其他暗色 UI：OCR 文本查表全部失败 → 非符文选择界面。
+            # 此类 UI（死亡回放/观战）会持续命中像素预筛，退避拉长采样间隔，
+            # 减少无效 OCR；连续误报只记一条日志（降噪）
+            self._false_positive_streak += 1
+            if self._false_positive_streak == 1:
+                logger.debug("像素命中但内容非符文（%s），进入误报退避", augments)
+            self._next_ocr_delay = _FALSE_POSITIVE_BACKOFF_SECONDS
             return
+        # 内容确认通过：重置误报退避
+        self._false_positive_streak = 0
+        self._next_ocr_delay = 0.0
 
         result = self._detector.feed(True)
         if result.should_trigger:
@@ -280,11 +298,26 @@ class AutoWatcher:
             self._trigger_recommendation(augments)
 
     def _has_known_augment(self, augments: list[str]) -> bool:
-        """OCR 文本中是否至少一个能匹配已知符文名（内容级确认）。"""
+        """OCR 文本中是否至少一个能匹配已知符文名（内容级确认）。
+
+        先做廉价模式预过滤：KDA 数字（``数字/数字``）与纯数字必然不是
+        符文名，直接排除，避免对查表的无谓调用。
+        """
+        import re
+
+        kda_pattern = re.compile(r"^\d+(/\d+)*%?$")
+        candidates = [
+            text
+            for text in augments
+            if text and not kda_pattern.match(text)
+        ]
+        if not candidates:
+            return False
+
         from aram_mayhem_helper.utils.data import get_game_data
 
         game_data = get_game_data()
-        return any(game_data.augment_id(text) is not None for text in augments if text)
+        return any(game_data.augment_id(text) is not None for text in candidates)
 
     def _trigger_recommendation(self, augments: list[str] | None = None) -> None:
         """触发推荐并展示结果（悬浮窗/控制台）。
