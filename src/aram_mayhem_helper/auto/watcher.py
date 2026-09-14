@@ -293,7 +293,13 @@ class AutoWatcher:
         if result.should_trigger:
             self._trigger_recommendation(augments)
         elif self._last_augments is not None and set(augments) != set(self._last_augments):
-            # 选择界面持续中且内容变化 → reroll 重触发（基准在触发时更新）
+            # 选择界面持续中且内容变化 → reroll 重触发（基准在触发时更新）。
+            # 新内容必须「基本完整」（至少 2 个非空）才算换卡：reroll 动画
+            # 播放中卡片会逐个清空（实测 ['威能之追求', '', '']），半空状态
+            # 是过渡帧而非新符文。
+            if sum(1 for text in augments if text) < 2:
+                logger.debug("新内容大部分为空（reroll 动画帧 %s），跳过", augments)
+                return
             logger.info("检测到符文变更（reroll）: %s -> %s", self._last_augments, augments)
             self._trigger_recommendation(augments)
 
@@ -306,11 +312,7 @@ class AutoWatcher:
         import re
 
         kda_pattern = re.compile(r"^\d+(/\d+)*%?$")
-        candidates = [
-            text
-            for text in augments
-            if text and not kda_pattern.match(text)
-        ]
+        candidates = [text for text in augments if text and not kda_pattern.match(text)]
         if not candidates:
             return False
 
