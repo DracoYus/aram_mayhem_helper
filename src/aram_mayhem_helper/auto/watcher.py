@@ -1,9 +1,9 @@
 """自动监听器：轮询游戏窗口像素特征，检测到符文选择界面时自动触发推荐。
 
 检测原理见 ``detection.py`` 模块注释。本模块负责 I/O 部分：
-- 游戏窗口定位（按窗口类名 FindWindow，客户区坐标下按百分比截区域——
+- 游戏窗口定位（EnumWindows 按标题精确匹配，客户区坐标下按百分比截区域——
   比按主屏尺寸截更稳，副屏/窗口化都能对准）
-- 区域截图与灰度统计（懒导入 PIL，保持无导入期副作用）
+- 两级检测：像素判据 < 5ms 廉价预筛 → OCR 文本查表内容确认
 - 状态机推进 + 触发 ``run_recommend`` + 结果展示（悬浮窗/控制台）
 """
 
@@ -19,7 +19,6 @@ from aram_mayhem_helper.algorithm.recommend_flow import RecommendOutcome, run_re
 from aram_mayhem_helper.auto.detection import (
     DetectionThresholds,
     SelectionDetector,
-    SelectionState,
     looks_like_selection_ui_stats,
 )
 from aram_mayhem_helper.ocr.ocr_tool import REGIONS
@@ -30,8 +29,8 @@ logger = logging.getLogger(__name__)
 # League 游戏进程窗口标题（EnumWindows 实测；RCLIENT 客户端窗口标题为
 # "League of Legends"（无此后缀），不会误匹配）
 _GAME_WINDOW_TITLE = "League of Legends (TM) Client"
-# 默认轮询间隔（秒）：选择界面停留数十秒，2s 足够及时且 CPU 占用可忽略
-DEFAULT_POLL_INTERVAL_SECONDS = 2.0
+# 默认轮询间隔（秒）：1s 平衡及时性与开销（选择阶段每轮含一次 OCR ~0.3s）
+DEFAULT_POLL_INTERVAL_SECONDS = 1.0
 # 推荐结果展示的标题（悬浮窗/控制台共用）
 _RESULT_TITLE = "符文推荐"
 # 悬浮窗队列轮询间隔（毫秒）
@@ -169,7 +168,7 @@ def _is_shard_ui(augments: list[str]) -> bool:
 
 
 class AutoWatcher:
-    """自动监听器：轮询 → 判别 → 触发推荐 → 展示结果。
+    """自动监听器：像素预筛 → OCR 内容确认 → 触发推荐 → 展示结果。
 
     Args:
         run_recommend_fn: 推荐流程函数（默认 ``run_recommend``，测试注入替身）
@@ -224,7 +223,7 @@ class AutoWatcher:
             self._thread.join(timeout=timeout)
 
     def _watch_loop(self) -> None:
-        """轮询主循环：窗口定位 → 截图判别 → 状态机 → 触发。"""
+        """轮询主循环：窗口定位 → 像素预筛 → OCR 确认 → 触发。"""
         while not self._stop_event.is_set():
             try:
                 self._poll_once()
@@ -233,7 +232,11 @@ class AutoWatcher:
             self._stop_event.wait(self._poll_interval)
 
     def _poll_once(self) -> None:
-        """单次轮询：检测 + 按需触发 + reroll 检测。"""
+        """单次轮询：像素预筛 → OCR 内容确认 → 触发 / reroll 检测。
+
+        两级检测：像素判据 < 5ms 廉价预筛（记分板/死亡回放等暗色 UI 也会命中）；
+        预筛命中才跑 OCR，内容查表确认（至少一个匹配已知符文名）才算选择界面。
+        """
         hwnd = find_game_window()
         if hwnd is None:
             # 游戏未运行：静默跳过（状态机保持原状，进对局后自然恢复）
@@ -246,56 +249,59 @@ class AutoWatcher:
         stats = capture_region_stats(hwnd)
         if stats is None:
             return
-        is_selection = looks_like_selection_ui_stats(stats, self._thresholds)
-        result = self._detector.feed(is_selection)
-        if result.should_trigger:
-            self._trigger_recommendation()
-        elif self._detector.state is SelectionState.TRIGGERED:
-            # 选择界面持续中：用 OCR 文本比对检测 reroll（像素指纹不可靠，
-            # 不同符文名的白字居中布局几乎相同）。OCR 单次 0.2~0.6s。
-            self._check_reroll()
+        if not looks_like_selection_ui_stats(stats, self._thresholds):
+            # 像素预筛未命中（游戏画面）：重武装并清除 reroll 基准
+            self._detector.feed(False)
+            self._last_augments = None
+            return
 
-    def _check_reroll(self) -> None:
-        """TRIGGERED 期间跑一次 OCR，识别文本与上次不同 → reroll 重触发。
-
-        只比对符文名（忽略顺序），空结果（动画帧识别不到）不算变化——
-        reroll 动画期间 OCR 常返回空/残缺，等动画结束识别稳定才判定。
-        游戏内「三选一碎片」界面是正常游戏流程（见 _is_shard_ui），
-        静默跳过：不触发推荐、不产生失败截图与 WARNING。
-        """
+        # 像素预筛命中：OCR 确认内容
         from aram_mayhem_helper.ocr.ocr_tool import get_ocr_tool
 
         augments = get_ocr_tool().get_augments()
         if not any(augments):
-            logger.debug("reroll 检查：OCR 结果为空（动画帧），跳过")
+            # 动画帧/过渡画面：OCR 空，按非选择界面处理（不触发不更新基准）
+            logger.debug("OCR 结果为空（过渡帧），跳过")
             return
         if _is_shard_ui(augments):
             logger.debug("碎片界面（正常游戏流程），跳过")
             return
-        if self._last_augments is not None and set(augments) != set(self._last_augments):
+        if not self._has_known_augment(augments):
+            # 记分板 KDA / 其他暗色 UI：OCR 文本查表全部失败 → 非符文选择界面
+            logger.debug("OCR 文本均非已知符文（%s），判定为其他 UI，跳过", augments)
+            return
+
+        result = self._detector.feed(True)
+        if result.should_trigger:
+            self._trigger_recommendation(augments)
+        elif self._last_augments is not None and set(augments) != set(self._last_augments):
+            # 选择界面持续中且内容变化 → reroll 重触发（基准在触发时更新）
             logger.info("检测到符文变更（reroll）: %s -> %s", self._last_augments, augments)
-            self._trigger_recommendation()
-        self._last_augments = augments
+            self._trigger_recommendation(augments)
 
-    def _trigger_recommendation(self) -> None:
-        """触发一次完整推荐流程并展示结果（悬浮窗/控制台）。
+    def _has_known_augment(self, augments: list[str]) -> bool:
+        """OCR 文本中是否至少一个能匹配已知符文名（内容级确认）。"""
+        from aram_mayhem_helper.utils.data import get_game_data
 
-        OCR 读到「三选一碎片」界面（正常游戏流程）时静默返回：不展示、
-        不记 WARNING、不存失败截图（碎片名查表失败是预期行为）。
+        game_data = get_game_data()
+        return any(game_data.augment_id(text) is not None for text in augments if text)
+
+    def _trigger_recommendation(self, augments: list[str] | None = None) -> None:
+        """触发推荐并展示结果（悬浮窗/控制台）。
+
+        Args:
+            augments: 预筛阶段已完成的 OCR 结果（复用，避免重复截图识别）；
+                None 时基准取 run_recommend 返回的识别文本。
         """
         logger.info("检测到符文选择界面，自动执行推荐...")
         from aram_mayhem_helper.ocr.ocr_tool import get_ocr_tool
         from aram_mayhem_helper.utils.data import get_game_data
 
-        # 预检：碎片界面直接跳过（避免 run_recommend 内部产生失败截图与 WARNING）
-        augments = get_ocr_tool().get_augments()
-        if _is_shard_ui(augments):
-            logger.debug("碎片界面（正常游戏流程），跳过推荐")
-            return
-
         outcome = self._run_recommend_fn(
             get_game_data(), get_ocr_tool(), preferred_source=get_config().data_source.source
         )
+        # reroll 比对基准：优先用预筛 OCR 结果（与触发判定一致），否则取推荐流程的识别文本
+        self._last_augments = augments if augments is not None else outcome.augments
         if outcome.lines:
             send_ok = self._notify_fn(outcome.lines)
             logger.info("推荐结果展示%s", "成功" if send_ok else "失败")
