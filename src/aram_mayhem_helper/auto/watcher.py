@@ -244,6 +244,9 @@ class AutoWatcher:
         region_stats, fingerprint = stats
         is_selection = looks_like_selection_ui_stats(region_stats, self._thresholds)
         result = self._detector.feed(is_selection, fingerprint)
+        if self._detector.state.name == "TRIGGERED":
+            # TRIGGERED 下的采样默认静默，记 DEBUG 便于排查 reroll 检测
+            logger.debug("选择界面持续采样中（等待 reroll 或界面消失）")
         if result.should_trigger:
             self._trigger_recommendation()
 
