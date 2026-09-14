@@ -9,6 +9,8 @@ from collections.abc import Callable
 from tkinter import scrolledtext, ttk
 
 from aram_mayhem_helper.algorithm.recommend_flow import run_recommend
+from aram_mayhem_helper.auto.detection import DetectionThresholds as AutoWatchThresholds
+from aram_mayhem_helper.auto.watcher import AutoWatcher
 from aram_mayhem_helper.crawlers.aramkit.aramkit_crawler import AramkitCrawler
 from aram_mayhem_helper.crawlers.ddragon.champion_crawler import ChampionCrawler
 from aram_mayhem_helper.crawlers.opgg.aram_augment_crawler import AramAugmentCrawler
@@ -131,6 +133,43 @@ def _recognize_worker(source: str) -> None:
 def _warmup_ocr() -> None:
     """后台线程预热 OCR 模型（静默执行：失败也不影响，首次识别时 OCRTool 会重新加载）。"""
     get_ocr_tool().warmup()
+
+
+# 自动监听单例（GUI 生命周期内复用；None 表示未创建）
+_auto_watcher: AutoWatcher | None = None
+# 悬浮窗队列轮询起始间隔（毫秒；与 watcher._OVERLAY_POLL_MS 一致）
+_OVERLAY_POLL_MS = 200
+
+
+def toggle_auto_watch(log_area: scrolledtext.ScrolledText, button: tk.Button) -> None:
+    """切换自动监听开/关（主线程回调；监听线程独立于任务互斥机制运行）。
+
+    自动监听只读屏幕像素，与「识别符文」任务（截图 + OCR）可能并发——
+    但两者截取同一区域互不干扰（截图是原子读操作），无需互斥。
+    """
+    global _auto_watcher
+    if _auto_watcher is None:
+        config = get_config().auto_watch
+        _auto_watcher = AutoWatcher(
+            poll_interval=config.poll_interval,
+            thresholds=AutoWatchThresholds(mean_threshold=config.mean_threshold, std_threshold=config.std_threshold),
+            debounce_count=config.debounce_count,
+        )
+
+    if _auto_watcher.is_running:
+        _auto_watcher.stop()
+        button.config(text="自动监听：关")
+        print_log("自动监听已关闭", log_area)
+    else:
+        # 注入主窗引用并启动悬浮窗队列轮询：watcher 线程 put 请求，
+        # 主线程 poll_overlay_queue 消费（root.after 非线程安全，不能跨线程直调）
+        from aram_mayhem_helper.auto.watcher import poll_overlay_queue, set_tk_root
+
+        set_tk_root(button.winfo_toplevel())
+        button.winfo_toplevel().after(_OVERLAY_POLL_MS, poll_overlay_queue)
+        _auto_watcher.start()
+        button.config(text="自动监听：开")
+        print_log("自动监听已开启：检测到符文选择界面时自动推荐并弹出悬浮提示", log_area)
 
 
 # ====================== 更新检查（启动/切换数据源时提醒用户更新数据） ======================
@@ -530,6 +569,15 @@ def _build_control_area(
     )
     btn2.pack(fill=tk.X, padx=pad_sm, pady=pad_xs)
 
+    # 自动监听开关（独立于识别按钮的互斥类别，可与识别/爬取并行）
+    btn_auto = tk.Button(
+        action_group,
+        text="自动监听：关",
+        command=lambda: toggle_auto_watch(log_area, btn_auto),
+        font=btn_font,
+    )
+    btn_auto.pack(fill=tk.X, padx=pad_sm, pady=pad_xs)
+
     # Right group: data crawling
     data_group = tk.LabelFrame(control_frame, text="数据抓取", font=label_font)
     data_group.grid(row=1, column=1, padx=(pad_sm, 0), pady=pad_sm, sticky="nsew")
@@ -612,12 +660,17 @@ def create_gui() -> None:
     # 后台预热 PaddleOCR 模型：首次初始化需数秒，预热后首次识别不再卡顿（静默执行）
     threading.Thread(target=_warmup_ocr, daemon=True).start()
 
-    # 窗口关闭时清理日志 handler，避免资源泄漏
+    # 窗口关闭时清理日志 handler 与自动监听线程，避免资源泄漏
     def _on_closing() -> None:
         app_logger = logging.getLogger("aram_mayhem_helper")
         for h in list(app_logger.handlers):
             if isinstance(h, TkinterLogHandler):
                 app_logger.removeHandler(h)
+        if _auto_watcher is not None:
+            _auto_watcher.stop()
+        from aram_mayhem_helper.auto.watcher import set_tk_root
+
+        set_tk_root(None)  # 清除主窗引用（窗口销毁后引用失效）
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", _on_closing)

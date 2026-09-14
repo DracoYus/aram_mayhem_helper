@@ -1,11 +1,13 @@
 import argparse
 import logging
+import time
 
 from aram_mayhem_helper.algorithm.recommend_flow import run_recommend
 from aram_mayhem_helper.crawlers.aramkit.aramkit_crawler import AramkitCrawler
 from aram_mayhem_helper.crawlers.ddragon.champion_crawler import ChampionCrawler
 from aram_mayhem_helper.crawlers.opgg.aram_augment_crawler import AramAugmentCrawler
 from aram_mayhem_helper.ocr.ocr_tool import get_ocr_tool
+from aram_mayhem_helper.utils.config import get_config
 from aram_mayhem_helper.utils.data import get_game_data
 from aram_mayhem_helper.utils.log_config import setup_logging
 
@@ -61,6 +63,31 @@ def recommend() -> None:
     logger.info("主程序执行完成")
 
 
+def auto_watch() -> None:
+    """
+    自动监听符文选择界面：检测到即自动推荐并打印结果（Ctrl+C 退出）
+    """
+    from aram_mayhem_helper.auto.detection import DetectionThresholds as WatchThresholds
+    from aram_mayhem_helper.auto.watcher import AutoWatcher
+
+    config = get_config().auto_watch
+    watcher = AutoWatcher(
+        poll_interval=config.poll_interval,
+        thresholds=WatchThresholds(mean_threshold=config.mean_threshold, std_threshold=config.std_threshold),
+        debounce_count=config.debounce_count,
+    )
+    logger.info("自动监听已启动，按 Ctrl+C 退出")
+    watcher.start()
+    try:
+        while watcher.is_running:
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        logger.info("收到退出信号，停止监听")
+    finally:
+        watcher.stop()
+        watcher.join(timeout=5)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """
     解析命令行参数
@@ -73,6 +100,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     # recommend 命令（main 为兼容别名）
     subparsers.add_parser("recommend", aliases=["main"], help="截图识别当前对局符文并给出推荐")
+
+    # auto_watch 命令
+    subparsers.add_parser("auto-watch", help="自动监听符文选择界面并推荐（悬浮窗/控制台展示，Ctrl+C 退出）")
 
     # aram_augment_crawler 命令
     aram_augment_parser = subparsers.add_parser("aram-augment-crawler", help="爬取英雄符文数据")
@@ -114,6 +144,8 @@ def cli_main(argv: list[str] | None = None) -> int:
     if args.command in (None, "recommend", "main"):
         # 无子命令时默认执行推荐（兼容旧 console script 直接调用的行为）
         recommend()
+    elif args.command == "auto-watch":
+        auto_watch()
     elif args.command == "aram-augment-crawler":
         aram_augment_crawler(args.start_page, args.end_page)
     elif args.command == "champion-crawler":

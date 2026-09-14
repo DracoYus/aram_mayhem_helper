@@ -42,8 +42,12 @@ uv run pytest
 
 ```text
 src/aram_mayhem_helper/
-├── cli.py              # CLI entry: cli_main() dispatcher + recommend()/crawler/web subcommands
-├── gui.py              # Tkinter GUI (background tasks via queue-bridged threads)
+├── cli.py              # CLI entry: cli_main() dispatcher + recommend()/auto-watch/crawler/web subcommands
+├── gui.py              # Tkinter GUI (background tasks via queue-bridged threads; 自动监听开关按钮)
+├── auto/
+│   ├── detection.py    # 像素判别 (looks_like_selection_ui*) + SelectionDetector 去抖状态机 (纯逻辑)
+│   ├── watcher.py      # AutoWatcher: EnumWindows 定位游戏窗口 → 客户区百分比截图 → 状态机 → run_recommend + 结果展示
+│   └── overlay.py      # 推荐结果悬浮窗 (Tkinter 置顶无边框, 截图排除, 8s 自动关闭; CLI 降级为控制台打印)
 ├── algorithm/
 │   ├── scoring.py      # add_unit_scale_attr + add_bayesian_sigmoid_score_attr (min-max → Bayesian-sigmoid)
 │   ├── pipeline.py     # build_scored_groups(): is_valid_entry filter → group by level → score → (groups, scored) (shared by Suggest & web)
@@ -101,11 +105,12 @@ Layering: entry points (cli/gui/web) → algorithm → utils/crawlers. Dependenc
 - **GameData.reload()** clears all caches (champion metadata, entries, translation table, aramkit resources) — GUI calls it after crawls.
 - **pipeline tolerances (intentional unification)**: single-item level groups (zero variance → `ValueError`/`ZeroDivisionError`) are logged and skipped, not raised; lookup-miss entries are dropped entirely (legacy Suggest kept them in `champion_augment_data`).
 - **OCR screen regions** are module constants `REGIONS` in `ocr/ocr_tool.py` as percentage tuples; `region_to_pixel()` converts. Update if the game UI changes.
+- **Auto-watch (自动监听)**: Live Client Data API has **no augment-selection events** (official EventName list is combat-only; verified in-game 2026-09) and `gameTime` does **not** freeze during selection — detection is pixel-based instead. Selection UI = dark background + high-contrast text (region mean < 60, std > 40; measured), in-game = map pixels. `AutoWatcher` locates the game window by exact title `"League of Legends (TM) Client"` via EnumWindows (RCLIENT client window is `"League of Legends"`, no false match), samples `REGIONS` over the **client rect** (works on secondary monitors/windowed mode), feeds a debounce state machine (default 2 consecutive hits), triggers `run_recommend` + result display once per selection phase (re-arms when the signal disappears). Skips sampling when the game window is not foreground. Result display: GUI shows a topmost borderless Tk overlay (excluded from screen capture, auto-closes after 8s, scheduled to the Tk main thread via `root.after`); CLI prints to console. CLI: `auto-watch` subcommand; GUI: toggle button in 游戏操作 group. Config `[auto_watch]` (enabled/poll_interval/debounce_count/mean_threshold/std_threshold). No extra dependencies.
 - **Update check**（GUI 启动/切换数据源时）: `AramkitCrawler.check_update()` / `ChampionCrawler.check_update()` return `UpdateStatus`（`utils/update_check.py`）. Both are read-only — `fetch_remote_versions()` was extracted from `discover_versions()` so checks never write `version.json`. OP.GG has no version metadata, so `check_update` is not implemented there; GUI skips it.
 - **`Suggest.__init__`** takes `(champion_id, data: GameData, *, source, thresholds: SuggestConfig)` — thresholds are instance data, never read from config at import.
 - **`config.toml`** contains thresholds controlling recommendations and the `[ocr] debug_save_captures` debug switch (see README); dead `[team_analysis]` section was removed (feature never merged).
 - **Dependencies**: base = flask/numpy(<2.0)/requests; `[ocr]` extra = paddleocr/paddlepaddle/Pillow/screeninfo/setuptools. Web deploy installs the base package only.
 - **Augment name↔ID↔level lookup**: `data/aramkit/resources/{version}/augments.json` (auto-downloaded by the aramkit crawler, follows game updates) takes **precedence**; `data/augment_trans.json` (manually maintained) only fills entries aramkit doesn't cover. Both go through the same OCR-tolerant `normalize_for_lookup` normalization. `GameData.augment_id`/`augment_info` are source-agnostic (opgg/aramkit share the same augment ID namespace).
 - **Two data sources coexist independently**: OP.GG (`data/opgg/aram_augments/`) and aramkit (`data/aramkit/aram_augments/{dataset}/`). Default source from `[data_source] source`; the web UI switches via the top-bar dropdown / `?source=` param. Both sources are min-max scaled to [0,1] per level group before Bayesian-sigmoid scoring, so scores are directly comparable. aramkit `winRate`/`pickRate` are 0~1 decimals; OP.GG values are 0-100 — no field-level isomorphism.
-- **Tests**: pytest (241 tests) with synthetic fixtures in `tests/fixtures/`; coverage gate ≥80% excluding `gui.py`/`ocr_tool.py`; mypy strict + ruff (E/F/I, line-length 120).
+- **Tests**: pytest (300 tests) with synthetic fixtures in `tests/fixtures/`; coverage gate ≥80% excluding `gui.py`/`ocr_tool.py`; mypy strict + ruff (E/F/I, line-length 120).
 - **Console scripts**: `aram-mayhem-helper` (primary) and `main` (deprecated alias) both point to `cli:cli_main`.

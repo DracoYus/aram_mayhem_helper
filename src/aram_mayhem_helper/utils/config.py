@@ -84,6 +84,17 @@ class OcrConfig:
 
 
 @dataclass(frozen=True)
+class AutoWatchConfig:
+    """自动监听配置（检测符文选择界面 → 自动推荐 + 结果展示）。"""
+
+    enabled: bool = False  # GUI/CLI 启动时是否自动开始监听
+    poll_interval: float = 2.0  # 轮询间隔（秒）
+    debounce_count: int = 2  # 连续命中判据 N 次才触发（过滤过渡帧误判）
+    mean_threshold: float = 60.0  # 区域灰度均值上限（暗背景特征）
+    std_threshold: float = 40.0  # 区域灰度标准差下限（高对比文字特征）
+
+
+@dataclass(frozen=True)
 class SuggestConfig:
     shrinkage_tau_factor: float = 0.5
     sigmoid_steepness: float = 1.0
@@ -101,6 +112,7 @@ class AppConfig:
     data_source: DataSourceConfig
     suggest: SuggestConfig
     ocr: OcrConfig
+    auto_watch: AutoWatchConfig
     project_root: Path
     data_dir: Path
     config_path: Path
@@ -196,6 +208,7 @@ def load_config(*, config_path: Path | None = None, data_dir: Path | None = None
     crawler_raw = _as_section(raw, "crawler")
     suggest_raw = _as_section(raw, "suggest")
     ocr_raw = _as_section(raw, "ocr")
+    auto_watch_raw = _as_section(raw, "auto_watch")
     unknown_suggest_keys = set(suggest_raw) - _SUGGEST_CONFIG_KEYS
     if unknown_suggest_keys:
         keys = ", ".join(sorted(unknown_suggest_keys))
@@ -253,6 +266,13 @@ def load_config(*, config_path: Path | None = None, data_dir: Path | None = None
         ),
         ocr=OcrConfig(
             debug_save_captures=bool(_get(ocr_raw, "debug_save_captures", default=False)),
+        ),
+        auto_watch=AutoWatchConfig(
+            enabled=bool(_get(auto_watch_raw, "enabled", default=False)),
+            poll_interval=float(_get(auto_watch_raw, "poll_interval", default=2.0)),
+            debounce_count=int(_get(auto_watch_raw, "debounce_count", default=2)),
+            mean_threshold=float(_get(auto_watch_raw, "mean_threshold", default=60.0)),
+            std_threshold=float(_get(auto_watch_raw, "std_threshold", default=40.0)),
         ),
         project_root=_DEFAULT_REPO_ROOT,
         data_dir=data_dir,

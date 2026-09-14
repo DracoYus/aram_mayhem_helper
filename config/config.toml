@@ -49,3 +49,16 @@ consider_select_score_threshold = 0.50
 # 键名使用正确拼写 percentage
 immediate_select_percentage_threshold = 0.10
 consider_select_percentage_threshold = 0.30
+
+[auto_watch]
+# 自动监听：检测到符文选择界面时自动执行推荐并展示结果（GUI 悬浮窗 / CLI 控制台）
+# enabled 仅影响 GUI/CLI 启动时是否自动开始监听（GUI 内可随时手动开关）
+enabled = false
+# 轮询间隔（秒）
+poll_interval = 2.0
+# 连续命中判据 N 次才触发（过滤回城特效/死亡灰屏等过渡帧误判）
+debounce_count = 2
+# 像素判别阈值：区域灰度 mean < mean_threshold 且 std > std_threshold
+# （选择界面 = 暗背景 + 高对比白字；实测两组样本间隔见 auto/detection.py 注释）
+mean_threshold = 60.0
+std_threshold = 40.0
