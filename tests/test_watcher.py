@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 import aram_mayhem_helper.auto.watcher as watcher_module
+from aram_mayhem_helper.algorithm.recommend_flow import RecommendOutcome
 from aram_mayhem_helper.auto.detection import DetectionThresholds, looks_like_selection_ui_stats
 from aram_mayhem_helper.auto.watcher import AutoWatcher, capture_region_stats, find_game_window, is_window_foreground
 
@@ -286,3 +287,56 @@ class TestRerollDetection:
         monkeypatch.setattr("aram_mayhem_helper.ocr.ocr_tool.OCRTool.get_augments", lambda self: ["丙", "甲", "乙"])
         w._check_reroll()
         assert w.recommend_calls == 1
+
+
+class TestShardUiFilter:
+    """「三选一碎片」界面过滤：正常游戏流程，静默跳过。"""
+
+    def test_is_shard_ui_all_shard_names(self) -> None:
+        from aram_mayhem_helper.auto.watcher import _is_shard_ui
+
+        assert _is_shard_ui(["力量碎片", "迅捷碎片", "护甲碎片"]) is True
+
+    def test_is_shard_ui_real_augments(self) -> None:
+        from aram_mayhem_helper.auto.watcher import _is_shard_ui
+
+        assert _is_shard_ui(["飞升仪式", "精怪魔法", "终极九头蛇"]) is False
+
+    def test_is_shard_ui_mixed(self) -> None:
+        from aram_mayhem_helper.auto.watcher import _is_shard_ui
+
+        # 部分以碎片结尾（OCR 残缺）不算碎片界面
+        assert _is_shard_ui(["力量碎片", "飞升仪式", ""]) is False
+
+    def test_is_shard_ui_empty(self) -> None:
+        from aram_mayhem_helper.auto.watcher import _is_shard_ui
+
+        assert _is_shard_ui([]) is False
+
+    def test_check_reroll_skips_shard_ui(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """碎片界面不触发推荐、不更新基准。"""
+        w = FakeWatcher(poll_interval=0.01)
+        w.samples = [_SELECTION_STATS, _SELECTION_STATS]
+        w._poll_once()
+        w._poll_once()
+        monkeypatch.setattr(
+            "aram_mayhem_helper.ocr.ocr_tool.OCRTool.get_augments", lambda self: ["力量碎片", "迅捷碎片", "护甲碎片"]
+        )
+        w._check_reroll()
+        assert w.recommend_calls == 1  # 只有首次触发，无 reroll 重触发
+        assert w._last_augments is None  # 基准未更新
+
+    def test_trigger_recommendation_skips_shard_ui(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """首次触发路径遇碎片界面：静默返回，不调 run_recommend。"""
+        calls = {"run_recommend": 0}
+        monkeypatch.setattr(
+            "aram_mayhem_helper.ocr.ocr_tool.OCRTool.get_augments", lambda self: ["力量碎片", "迅捷碎片", "护甲碎片"]
+        )
+
+        def fake_run_recommend(*args: Any, **kwargs: Any) -> RecommendOutcome:
+            calls["run_recommend"] += 1
+            return RecommendOutcome(lines=[])
+
+        w = FakeWatcher(run_recommend_fn=fake_run_recommend, poll_interval=0.01)
+        w._trigger_recommendation()
+        assert calls["run_recommend"] == 0

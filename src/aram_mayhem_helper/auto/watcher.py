@@ -158,6 +158,16 @@ def poll_overlay_queue() -> None:
         _tk_root_ref.after(_OVERLAY_POLL_MS, poll_overlay_queue)
 
 
+# 游戏内「三选一碎片」界面的 OCR 文本全部以「碎片」结尾（如 力量碎片/迅捷碎片），
+# 真实符文名（221 个）中无此前缀——以此区分碎片界面与符文选择界面
+_SHARD_SUFFIX = "碎片"
+
+
+def _is_shard_ui(augments: list[str]) -> bool:
+    """OCR 结果是否为游戏内「三选一碎片」界面（全部以「碎片」结尾）。"""
+    return bool(augments) and all(text.endswith(_SHARD_SUFFIX) for text in augments if text)
+
+
 class AutoWatcher:
     """自动监听器：轮询 → 判别 → 触发推荐 → 展示结果。
 
@@ -250,6 +260,8 @@ class AutoWatcher:
 
         只比对符文名（忽略顺序），空结果（动画帧识别不到）不算变化——
         reroll 动画期间 OCR 常返回空/残缺，等动画结束识别稳定才判定。
+        游戏内「三选一碎片」界面是正常游戏流程（见 _is_shard_ui），
+        静默跳过：不触发推荐、不产生失败截图与 WARNING。
         """
         from aram_mayhem_helper.ocr.ocr_tool import get_ocr_tool
 
@@ -257,16 +269,29 @@ class AutoWatcher:
         if not any(augments):
             logger.debug("reroll 检查：OCR 结果为空（动画帧），跳过")
             return
+        if _is_shard_ui(augments):
+            logger.debug("碎片界面（正常游戏流程），跳过")
+            return
         if self._last_augments is not None and set(augments) != set(self._last_augments):
             logger.info("检测到符文变更（reroll）: %s -> %s", self._last_augments, augments)
             self._trigger_recommendation()
         self._last_augments = augments
 
     def _trigger_recommendation(self) -> None:
-        """触发一次完整推荐流程并展示结果（悬浮窗/控制台）。"""
+        """触发一次完整推荐流程并展示结果（悬浮窗/控制台）。
+
+        OCR 读到「三选一碎片」界面（正常游戏流程）时静默返回：不展示、
+        不记 WARNING、不存失败截图（碎片名查表失败是预期行为）。
+        """
         logger.info("检测到符文选择界面，自动执行推荐...")
         from aram_mayhem_helper.ocr.ocr_tool import get_ocr_tool
         from aram_mayhem_helper.utils.data import get_game_data
+
+        # 预检：碎片界面直接跳过（避免 run_recommend 内部产生失败截图与 WARNING）
+        augments = get_ocr_tool().get_augments()
+        if _is_shard_ui(augments):
+            logger.debug("碎片界面（正常游戏流程），跳过推荐")
+            return
 
         outcome = self._run_recommend_fn(
             get_game_data(), get_ocr_tool(), preferred_source=get_config().data_source.source
