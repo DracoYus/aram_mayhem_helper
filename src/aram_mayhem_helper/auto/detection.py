@@ -7,6 +7,10 @@
   （mean ≈ 31~42, std ≈ 52~65, min/max ≈ 8/231），
   游戏内同区域为地图像素（mean ≈ 99~132, std ≈ 25~32, 无极端值），
   mean/std 双判据在两组样本间均有 2~4 倍间隔。
+
+reroll（刷新符文）处理：reroll 后选择界面仍停留在屏幕上（信号不消失），
+状态机在 TRIGGERED 状态下对区域截图做内容指纹（亮像素降采样二值向量），
+指纹连续 2 次显著变化 → 判定为 reroll 换卡，重新触发识别。
 """
 
 from dataclasses import dataclass
@@ -18,6 +22,10 @@ from numpy.typing import NDArray
 # 默认判别阈值（实测两组样本间隔中点，可被配置覆盖）
 DEFAULT_MEAN_THRESHOLD = 60.0
 DEFAULT_STD_THRESHOLD = 40.0
+# 指纹差异阈值：汉明距离/总位数 超过此值视为内容变化（reroll 换卡）
+DEFAULT_FINGERPRINT_CHANGE_RATIO = 0.10
+# 指纹降采样网格（每区域缩到 grid × grid 二值图）
+_FINGERPRINT_GRID = 16
 
 
 @dataclass(frozen=True)
@@ -57,6 +65,33 @@ def looks_like_selection_ui_stats(stats: list[tuple[float, float]], thresholds: 
     return any(mean < thresholds.mean_threshold and std > thresholds.std_threshold for mean, std in stats)
 
 
+def content_fingerprint(image: NDArray[np.uint8], grid: int = _FINGERPRINT_GRID) -> NDArray[np.float64]:
+    """区域灰度图 → 内容指纹（grid × grid 降采样二值向量）。
+
+    分块均值降采样后，亮于块均值的格子记 1（文字所在格），其余记 0。
+    对亮度整体偏移（动画光效）不敏感，只反映文字布局——同一卡片重复
+    采样指纹稳定，reroll 换卡后文字布局变化 → 指纹显著变化。
+    """
+    if image.size == 0:
+        return np.zeros(grid * grid, dtype=np.float64)
+    h, w = image.shape[:2]
+    blocks = [
+        image[r * h // grid : (r + 1) * h // grid, c * w // grid : (c + 1) * w // grid].mean()
+        for r in range(grid)
+        for c in range(grid)
+    ]
+    resized = np.array(blocks, dtype=np.float64).reshape(grid, grid)
+    binary: NDArray[np.float64] = (resized > resized.mean()).astype(np.float64)
+    return binary.ravel()
+
+
+def fingerprint_changed(a: NDArray[np.float64], b: NDArray[np.float64], ratio: float) -> bool:
+    """两个指纹的汉明距离占比是否超过 *ratio*（内容显著变化）。"""
+    if a.shape != b.shape or a.size == 0:
+        return False
+    return float(np.mean(a != b)) > ratio
+
+
 class SelectionState(Enum):
     """选择阶段检测状态机的状态。"""
 
@@ -69,41 +104,72 @@ class DetectionResult:
     """状态机单步推进的结果。"""
 
     state: SelectionState
-    should_trigger: bool  # 仅在 RUNNING → 触发的跳变瞬间为 True
+    should_trigger: bool  # 触发瞬间为 True（首次进入选择界面，或 reroll 换卡）
 
 
 class SelectionDetector:
     """选择阶段检测状态机：连续 N 次命中判据后触发一次，信号消失后重新武装。
 
     去抖（连续 N 次）用于过滤游戏过渡帧（回城特效、死亡灰屏等短暂暗画面）。
+
+    reroll 支持：TRIGGERED 状态下若界面内容指纹连续 2 次显著变化
+    （刷新符文换卡），重新触发识别并更新快照。
     """
 
-    def __init__(self, debounce_count: int = 2) -> None:
+    def __init__(
+        self,
+        debounce_count: int = 2,
+        fingerprint_change_ratio: float = DEFAULT_FINGERPRINT_CHANGE_RATIO,
+    ) -> None:
         if debounce_count < 1:
             raise ValueError(f"debounce_count 必须 >= 1，收到 {debounce_count}")
         self._debounce_count = debounce_count
+        self._fingerprint_ratio = fingerprint_change_ratio
         self._consecutive_hits = 0
         self._state = SelectionState.RUNNING
+        self._fingerprint: NDArray[np.float64] | None = None  # 已识别界面的内容快照
+        self._change_streak = 0  # 连续指纹变化计数（去抖 reroll 瞬间动画）
 
     @property
     def state(self) -> SelectionState:
         return self._state
 
     def reset(self) -> None:
-        """回到初始状态（RUNNING，计数清零）。"""
+        """回到初始状态（RUNNING，计数清零，指纹清空）。"""
         self._consecutive_hits = 0
+        self._change_streak = 0
+        self._fingerprint = None
         self._state = SelectionState.RUNNING
 
-    def feed(self, is_selection_ui: bool) -> DetectionResult:
-        """输入一次判别结果，推进状态机。"""
+    def feed(self, is_selection_ui: bool, fingerprint: NDArray[np.float64] | None = None) -> DetectionResult:
+        """输入一次判别结果（TRIGGERED 状态下附内容指纹），推进状态机。
+
+        RUNNING 触发时若带指纹则记录为快照；TRIGGERED 下指纹连续 2 次
+        显著变化 → reroll 重触发并更新快照。
+        """
         if self._state is SelectionState.TRIGGERED:
-            if is_selection_ui:
-                # 仍在选择界面（推荐流程进行中），保持 TRIGGERED
+            if not is_selection_ui:
+                # 选择界面消失 → 重新武装
+                self._state = SelectionState.RUNNING
                 self._consecutive_hits = 0
+                self._change_streak = 0
+                self._fingerprint = None
                 return DetectionResult(state=self._state, should_trigger=False)
-            # 选择界面消失 → 重新武装
-            self._state = SelectionState.RUNNING
-            self._consecutive_hits = 0
+
+            # 仍在选择界面：检查内容是否变化（reroll 换卡）
+            if fingerprint is None:
+                return DetectionResult(state=self._state, should_trigger=False)
+            changed = self._fingerprint is not None and fingerprint_changed(
+                self._fingerprint, fingerprint, self._fingerprint_ratio
+            )
+            self._change_streak = self._change_streak + 1 if changed else 0
+            if self._change_streak >= 2:
+                # reroll：更新快照并重新触发
+                self._fingerprint = fingerprint
+                self._change_streak = 0
+                return DetectionResult(state=self._state, should_trigger=True)
+            if self._fingerprint is None:
+                self._fingerprint = fingerprint
             return DetectionResult(state=self._state, should_trigger=False)
 
         # RUNNING 状态
@@ -114,5 +180,7 @@ class SelectionDetector:
         self._consecutive_hits += 1
         if self._consecutive_hits >= self._debounce_count:
             self._state = SelectionState.TRIGGERED
+            if fingerprint is not None:
+                self._fingerprint = fingerprint
             return DetectionResult(state=self._state, should_trigger=True)
         return DetectionResult(state=self._state, should_trigger=False)

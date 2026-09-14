@@ -15,8 +15,16 @@ import tkinter as tk
 from collections.abc import Callable
 from ctypes import wintypes
 
+import numpy as np
+from numpy.typing import NDArray
+
 from aram_mayhem_helper.algorithm.recommend_flow import RecommendOutcome, run_recommend
-from aram_mayhem_helper.auto.detection import DetectionThresholds, SelectionDetector, looks_like_selection_ui_stats
+from aram_mayhem_helper.auto.detection import (
+    DetectionThresholds,
+    SelectionDetector,
+    content_fingerprint,
+    looks_like_selection_ui_stats,
+)
 from aram_mayhem_helper.ocr.ocr_tool import REGIONS
 from aram_mayhem_helper.utils.config import get_config
 
@@ -61,10 +69,12 @@ def is_window_foreground(hwnd: int) -> bool:
     return bool(user32.GetForegroundWindow() == hwnd)
 
 
-def capture_region_stats(hwnd: int) -> list[tuple[float, float]] | None:
-    """按游戏窗口客户区百分比坐标截取 REGIONS 区域，返回各区域灰度 (mean, std)。
+def capture_region_stats(hwnd: int) -> tuple[list[tuple[float, float]], NDArray[np.float64]] | None:
+    """按游戏窗口客户区百分比坐标截取 REGIONS 区域。
 
-    窗口不可用（句柄失效/客户区为空）时返回 None。
+    Returns:
+        (各区域灰度 (mean, std), 拼接的内容指纹)；
+        窗口不可用（句柄失效/客户区为空）时返回 None。
     """
     rect = wintypes.RECT()
     if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
@@ -82,6 +92,7 @@ def capture_region_stats(hwnd: int) -> list[tuple[float, float]] | None:
     from PIL import ImageGrab
 
     stats: list[tuple[float, float]] = []
+    fingerprints: list[NDArray[np.float64]] = []
     for region in REGIONS:
         left = origin_x + int(region[0] * width)
         top = origin_y + int(region[1] * height)
@@ -89,7 +100,8 @@ def capture_region_stats(hwnd: int) -> list[tuple[float, float]] | None:
         bottom = origin_y + int(region[3] * height)
         image = ImageGrab.grab((left, top, right, bottom)).convert("L")
         stats.append(_gray_stats(image))
-    return stats
+        fingerprints.append(content_fingerprint(np.asarray(image)))
+    return stats, np.concatenate(fingerprints)
 
 
 def _gray_stats(image: object) -> tuple[float, float]:
@@ -229,8 +241,9 @@ class AutoWatcher:
         stats = capture_region_stats(hwnd)
         if stats is None:
             return
-        is_selection = looks_like_selection_ui_stats(stats, self._thresholds)
-        result = self._detector.feed(is_selection)
+        region_stats, fingerprint = stats
+        is_selection = looks_like_selection_ui_stats(region_stats, self._thresholds)
+        result = self._detector.feed(is_selection, fingerprint)
         if result.should_trigger:
             self._trigger_recommendation()
 
