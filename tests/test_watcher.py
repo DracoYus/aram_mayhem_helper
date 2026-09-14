@@ -218,3 +218,71 @@ class TestNotifyResult:
         watcher_module.poll_overlay_queue()
         assert built == [["快选：测试"]]
         assert scheduled == [watcher_module._OVERLAY_POLL_MS]
+
+
+class TestRerollDetection:
+    """reroll 检测：TRIGGERED 期间 OCR 文本变化 → 重触发。"""
+
+    def _watcher(self) -> FakeWatcher:
+        w = FakeWatcher(poll_interval=0.01, debounce_count=2)
+        return w
+
+    def test_reroll_retriggers_on_text_change(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """识别文本变化 → 重触发推荐。"""
+        w = self._watcher()
+        # 首次触发
+        w.samples = [_SELECTION_STATS, _SELECTION_STATS]
+        w._poll_once()
+        w._poll_once()
+        assert w.recommend_calls == 1
+        assert w._last_augments is None  # 触发路径未更新（由 _check_reroll 更新）
+        # 模拟首次 _check_reroll 建立基准
+        monkeypatch.setattr("aram_mayhem_helper.ocr.ocr_tool.OCRTool.get_augments", lambda self: ["甲", "乙", "丙"])
+        w._check_reroll()
+        assert w._last_augments == ["甲", "乙", "丙"]
+        # reroll：文本变化 → 重触发（用计数替身替换 _trigger_recommendation）
+        trigger_count = {"n": 0}
+
+        def counting_trigger() -> None:
+            trigger_count["n"] += 1
+
+        w._trigger_recommendation = counting_trigger  # type: ignore[method-assign]
+        monkeypatch.setattr("aram_mayhem_helper.ocr.ocr_tool.OCRTool.get_augments", lambda self: ["甲", "丁", "戊"])
+        w._check_reroll()
+        assert trigger_count["n"] == 1
+
+    def test_same_text_no_retrigger(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """文本不变 → 不重触发。"""
+        w = self._watcher()
+        w.samples = [_SELECTION_STATS, _SELECTION_STATS]
+        w._poll_once()
+        w._poll_once()
+        monkeypatch.setattr("aram_mayhem_helper.ocr.ocr_tool.OCRTool.get_augments", lambda self: ["甲", "乙", "丙"])
+        w._check_reroll()
+        w._check_reroll()
+        assert w.recommend_calls == 1
+
+    def test_empty_ocr_skipped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """空 OCR 结果（动画帧）不算变化，也不更新基准。"""
+        w = self._watcher()
+        w.samples = [_SELECTION_STATS, _SELECTION_STATS]
+        w._poll_once()
+        w._poll_once()
+        monkeypatch.setattr("aram_mayhem_helper.ocr.ocr_tool.OCRTool.get_augments", lambda self: ["甲", "乙", "丙"])
+        w._check_reroll()
+        monkeypatch.setattr("aram_mayhem_helper.ocr.ocr_tool.OCRTool.get_augments", lambda self: ["", "", ""])
+        w._check_reroll()
+        assert w.recommend_calls == 1
+        assert w._last_augments == ["甲", "乙", "丙"]  # 基准未被空结果覆盖
+
+    def test_order_change_counts_as_same(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """相同符文不同顺序（OCR 偶尔乱序）不算变化。"""
+        w = self._watcher()
+        w.samples = [_SELECTION_STATS, _SELECTION_STATS]
+        w._poll_once()
+        w._poll_once()
+        monkeypatch.setattr("aram_mayhem_helper.ocr.ocr_tool.OCRTool.get_augments", lambda self: ["甲", "乙", "丙"])
+        w._check_reroll()
+        monkeypatch.setattr("aram_mayhem_helper.ocr.ocr_tool.OCRTool.get_augments", lambda self: ["丙", "甲", "乙"])
+        w._check_reroll()
+        assert w.recommend_calls == 1

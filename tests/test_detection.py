@@ -2,7 +2,6 @@
 
 import numpy as np
 import pytest
-from numpy.typing import NDArray
 
 from aram_mayhem_helper.auto.detection import (
     DEFAULT_MEAN_THRESHOLD,
@@ -11,8 +10,6 @@ from aram_mayhem_helper.auto.detection import (
     DetectionThresholds,
     SelectionDetector,
     SelectionState,
-    content_fingerprint,
-    fingerprint_changed,
     looks_like_selection_ui,
     looks_like_selection_ui_stats,
 )
@@ -124,67 +121,3 @@ class TestSelectionDetector:
     def test_default_thresholds_values(self) -> None:
         assert DEFAULT_MEAN_THRESHOLD == 60.0
         assert DEFAULT_STD_THRESHOLD == 40.0
-
-
-class TestContentFingerprint:
-    def test_same_content_same_fingerprint(self) -> None:
-        # 同一内容重复采样 → 指纹一致（对亮度整体偏移不敏感）
-        base = np.zeros((108, 576), dtype=np.uint8)
-        base[40:70, 100:400] = 230
-        shifted = np.zeros((108, 576), dtype=np.uint8)
-        shifted[40:70, 100:400] = 200  # 亮度整体降低，布局不变
-        fp1 = content_fingerprint(base)
-        fp2 = content_fingerprint(shifted)
-        assert fingerprint_changed(fp1, fp2, ratio=0.10) is False
-
-
-class TestRerollRetrigger:
-    """reroll（刷新符文）重触发行为：选择界面不消失、内容指纹变化。"""
-
-    def _fp_a(self) -> NDArray:
-        img = np.zeros((108, 576), dtype=np.uint8)
-        img[40:70, 50:250] = 230
-        return content_fingerprint(img)
-
-    def _fp_b(self) -> NDArray:
-        img = np.zeros((108, 576), dtype=np.uint8)
-        img[40:70, 300:550] = 230
-        return content_fingerprint(img)
-
-    def test_reroll_retriggers_after_two_changed_samples(self) -> None:
-        detector = SelectionDetector(debounce_count=1)
-        assert detector.feed(True, self._fp_a()).should_trigger is True  # 首次触发
-        # reroll：同一界面内容变化，连续 2 次 → 重触发
-        assert detector.feed(True, self._fp_b()).should_trigger is False  # 第 1 次变化仅计数
-        assert detector.feed(True, self._fp_b()).should_trigger is True  # 第 2 次 → 重触发
-
-    def test_single_changed_sample_does_not_retrigger(self) -> None:
-        """单次指纹变化（动画光效等瞬态）不触发，streak 清零。"""
-        detector = SelectionDetector(debounce_count=1)
-        detector.feed(True, self._fp_a())
-        detector.feed(True, self._fp_b())  # 变化 1 次
-        detector.feed(True, self._fp_a())  # 回到原内容 → streak 清零
-        assert detector.feed(True, self._fp_a()).should_trigger is False
-
-    def test_reroll_snapshot_updated_after_retrigger(self) -> None:
-        """重触发后快照更新为新内容，不再重复触发。"""
-        detector = SelectionDetector(debounce_count=1)
-        detector.feed(True, self._fp_a())
-        detector.feed(True, self._fp_b())
-        detector.feed(True, self._fp_b())  # 重触发，快照 → fp_b
-        assert detector.feed(True, self._fp_b()).should_trigger is False
-
-    def test_signal_disappear_clears_fingerprint(self) -> None:
-        """选择界面消失 → 重新武装，指纹清空，新界面按首次触发处理。"""
-        detector = SelectionDetector(debounce_count=1)
-        detector.feed(True, self._fp_a())
-        detector.feed(False)
-        assert detector.state is SelectionState.RUNNING
-        assert detector.feed(True, self._fp_a()).should_trigger is True
-
-    def test_feed_without_fingerprint_never_retriggers(self) -> None:
-        """TRIGGERED 状态下不传指纹（旧调用方式）保持原行为：不重触发。"""
-        detector = SelectionDetector(debounce_count=1)
-        assert detector.feed(True).should_trigger is True
-        assert detector.feed(True).should_trigger is False
-        assert detector.feed(True).should_trigger is False
