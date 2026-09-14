@@ -75,6 +75,12 @@ def run_recommend(
     augments: list[str] | None = None
     try:
         augments = ocr_tool.get_augments()
+        if not any(augments):
+            # OCR 全空：reroll 动画/过渡帧，卡片名尚未渲染完成。不进查表
+            # （空名查表必然失败，会产生误导性 WARNING 与失败截图），仅记
+            # DEBUG，等下一轮采样。
+            logger.debug("OCR 结果全空（过渡帧 %s），跳过识别", augments)
+            return RecommendOutcome(lines=[], champion_name=champion_name, source=resolved, augments=augments)
         augments_info = suggest.suggest(augments, on_unrecognized=on_unrecognized)
         if augments_info:
             for augment_info in augments_info:

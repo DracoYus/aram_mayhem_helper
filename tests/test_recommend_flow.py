@@ -139,5 +139,5 @@ class TestRecommendFlow:
         monkeypatch.setattr(recommend_flow, "get_current_champion_name", lambda: "Ahri")
         fake_suggest.suggest_return = []
         with caplog.at_level("WARNING", logger="aram_mayhem_helper.algorithm.recommend_flow"):
-            run_recommend(game_data, FakeOcr([]))
+            run_recommend(game_data, FakeOcr(["泰坦的坚决"]))  # 非空 OCR（全空现在走过渡帧短路）
         assert any("未能生成任何符文建议" in r.message for r in caplog.records)

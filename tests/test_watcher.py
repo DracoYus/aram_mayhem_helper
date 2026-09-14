@@ -68,6 +68,8 @@ class FakeWatcher(AutoWatcher):
         if result.should_trigger:
             self._trigger_recommendation(augments)
         elif self._last_augments is not None and set(augments) != set(self._last_augments):
+            if sum(1 for text in augments if text) < 2:
+                return  # reroll 动画半空帧
             self._trigger_recommendation(augments)
 
 
@@ -349,3 +351,38 @@ class TestFalsePositiveBackoff:
         assert w._has_known_augment(["5910/6/28", "16", "11/17"]) is False
         assert w._has_known_augment(["0", "18", "664"]) is False
         assert w._has_known_augment(["13615%"]) is False
+
+
+class TestPartialEmptyFrameFilter:
+    """reroll 动画半空帧过滤：新内容 <2 个非空不算换卡。"""
+
+    def _w(self) -> FakeWatcher:
+        return FakeWatcher(poll_interval=0.01, debounce_count=1)
+
+    def test_mostly_empty_change_skipped(self) -> None:
+        """实测场景：['威能之追求', '', ''] 是动画帧，不重触发。"""
+        w = self._w()
+        w.pixel_samples = [_SELECTION_STATS] * 3
+        w.ocr_results = [_REAL_AUGMENTS, _REAL_AUGMENTS, ["威能之追求", "", ""]]
+        w._poll_once()  # 触发
+        w._poll_once()  # 相同
+        w._poll_once()  # 半空变化 → 跳过
+        assert w.recommend_calls == 1
+        assert w._last_augments == _REAL_AUGMENTS  # 基准未被半空帧污染
+
+    def test_single_nonempty_change_skipped(self) -> None:
+        w = self._w()
+        w.pixel_samples = [_SELECTION_STATS] * 3
+        w.ocr_results = [_REAL_AUGMENTS, _REAL_AUGMENTS, ["甲", "", ""]]
+        for _ in range(3):
+            w._poll_once()
+        assert w.recommend_calls == 1
+
+    def test_full_change_still_retriggers(self) -> None:
+        """完整的 3 个新符文 → 正常重触发。"""
+        w = self._w()
+        w.pixel_samples = [_SELECTION_STATS] * 3
+        w.ocr_results = [_REAL_AUGMENTS, _REAL_AUGMENTS, ["甲", "乙", "丙"]]
+        for _ in range(3):
+            w._poll_once()
+        assert w.recommend_calls == 2
