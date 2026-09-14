@@ -24,6 +24,7 @@ class RecommendOutcome:
     lines: list[str]  # 建议行（"快选符文：..." 等），空列表表示无建议
     champion_name: str | None = None  # 识别到的英雄名（未识别到为 None）
     source: str | None = None  # 实际使用的数据源
+    augments: list[str] | None = None  # OCR 识别的原始符文名（失败路径为 None）
 
 
 def run_recommend(
@@ -80,9 +81,9 @@ def run_recommend(
                 logger.info(str(augment_info))
         else:
             logger.warning("未能生成任何符文建议（OCR 名称未匹配到当前英雄的符文数据）")
-        return RecommendOutcome(lines=augments_info, champion_name=champion_name, source=resolved)
+        return RecommendOutcome(lines=augments_info, champion_name=champion_name, source=resolved, augments=augments)
     except Exception as e:
         logger.error(f"「识别符文」操作出错：{str(e)}")
         if augments is not None:
             logger.info(str(augments))
-        return RecommendOutcome(lines=[], champion_name=champion_name, source=resolved)
+        return RecommendOutcome(lines=[], champion_name=champion_name, source=resolved, augments=augments)
