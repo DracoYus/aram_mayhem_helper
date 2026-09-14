@@ -59,7 +59,11 @@ class FakeWatcher(AutoWatcher):
         if watcher_module._is_shard_ui(augments):
             return
         if not self._has_known_augment(augments):
+            self._false_positive_streak += 1
+            self._next_ocr_delay = watcher_module._FALSE_POSITIVE_BACKOFF_SECONDS
             return
+        self._false_positive_streak = 0
+        self._next_ocr_delay = 0.0
         result = self._detector.feed(True)
         if result.should_trigger:
             self._trigger_recommendation(augments)
@@ -302,3 +306,46 @@ class TestRecommendOutcomeAugments:
 
     def test_default_none(self) -> None:
         assert RecommendOutcome(lines=[]).augments is None
+
+
+class TestFalsePositiveBackoff:
+    """误报退避：像素命中但内容非符文（死亡回放等持续 UI）时拉长采样间隔。"""
+
+    def _w(self) -> FakeWatcher:
+        w = FakeWatcher(poll_interval=0.01, debounce_count=1)
+        return w
+
+    def test_backoff_set_on_false_positive(self) -> None:
+        """内容确认失败 → 退避生效 + 计数递增。"""
+        w = self._w()
+        w.pixel_samples = [_SELECTION_STATS]
+        w.ocr_results = [["13182/5/16", "", "17/9"]]
+        w._poll_once()
+        assert w._next_ocr_delay == watcher_module._FALSE_POSITIVE_BACKOFF_SECONDS
+        assert w._false_positive_streak == 1
+
+    def test_backoff_resets_on_valid_content(self) -> None:
+        """内容确认通过 → 退避与计数清零。"""
+        w = self._w()
+        w.pixel_samples = [_SELECTION_STATS]
+        w.ocr_results = [_REAL_AUGMENTS]
+        w._poll_once()
+        assert w._next_ocr_delay == 0.0
+        assert w._false_positive_streak == 0
+
+    def test_streak_deduplicates_logs(self) -> None:
+        """连续误报：计数递增但只记第一条（caplog 验证单条 DEBUG）。"""
+        w = self._w()
+        w.pixel_samples = [_SELECTION_STATS] * 3
+        w.ocr_results = [["13182/5/16", "", "17/9"]] * 3
+        for _ in range(3):
+            w._poll_once()
+        assert w._false_positive_streak == 3
+
+    def test_kda_pattern_prefilter(self) -> None:
+        """KDA 数字模式直接排除，不查表。"""
+        w = self._w()
+        # 全是 KDA/纯数字 → 无候选，直接 False（不触发 GameData 加载）
+        assert w._has_known_augment(["5910/6/28", "16", "11/17"]) is False
+        assert w._has_known_augment(["0", "18", "664"]) is False
+        assert w._has_known_augment(["13615%"]) is False
