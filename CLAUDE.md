@@ -53,7 +53,7 @@ src/aram_mayhem_helper/
 │   ├── base.py         # BaseCrawler: session / fetch_json / save_to_file / crawl_and_save / batch_crawl_ids (shared loop + consecutive-failure abort)
 │   ├── ddragon/champion_crawler.py
 │   ├── opgg/aram_augment_crawler.py
-│   └── aramkit/aramkit_crawler.py  # version discovery from homepage HTML
+│   ├── aramkit/aramkit_crawler.py  # version discovery from homepage HTML
 │   └── aramkit/version_state.py    # VersionState: version.json read/write, resume progress, skip checks
 ├── league_client_api/
 │   └── live_data.py    # Reads current game state from League Client (localhost:2999)
@@ -66,12 +66,17 @@ src/aram_mayhem_helper/
 └── utils/
     ├── config.py       # Frozen dataclasses (AppConfig) + load_config() + lazy get_config()
     ├── data.py         # GameData repository + AugmentLookup (lazy singletons via get_game_data())
-    ├── aramkit.py      # convert_augment_records + version_sort_key + AramkitResources(dir)
+    ├── aramkit.py      # convert_augment_records + AramkitResources(dir); re-exports version_sort_key
+    ├── version.py      # parse_version / version_sort_key / latest_version (ddragon + aramkit formats)
     ├── retry.py        # Typed exponential-backoff retry decorator
     ├── log_config.py   # Root logger setup (console + file)
     ├── text_normalization.py  # OCR text cleanup: dash variants (— → -) etc.
-    └── update_check.py  # UpdateStatus frozen dataclass + user-facing message (check logic lives in crawler.check_update())
-tests/                  # pytest: 241 tests + fixtures/ (synthetic data mirroring disk layout)
+    ├── update_check.py  # UpdateStatus frozen dataclass + user-facing message (check logic lives in crawler.check_update())
+    ├── dpi.py          # Windows DPI awareness (per-monitor V2) declared before any window exists
+    └── window_capture.py  # WDA_EXCLUDEFROMCAPTURE: own window stays visible but never appears in OCR screenshots
+scripts/
+└── convert_augment_trans.py  # 工具：data/aram-mayhem-augments.zh_cn.json → data/augment_trans.json（全量覆盖）
+tests/                  # pytest suite + fixtures/ (synthetic data mirroring disk layout)
 ```
 
 Layering: entry points (cli/gui/web) → algorithm → utils/crawlers. Dependencies point downward only.
@@ -97,6 +102,7 @@ Layering: entry points (cli/gui/web) → algorithm → utils/crawlers. Dependenc
 ## Important Details
 
 - **Config is frozen dataclasses**: `load_config()` supports env `ARAM_MAYHEM_CONFIG_DIR`/`ARAM_MAYHEM_DATA_DIR` (required for Docker, where `parents[3]` resolves to site-packages).
+- **Runtime config mutation**: `utils/config.py:set_data_source()` rewrites the `[data_source]` line in `config/config.toml` in place and rebuilds the `get_config()` singleton; the GUI dropdown calls it. Callers holding a cached `AppConfig`/`GameData` must re-read afterwards.
 - **No import-time side effects**: `get_game_data()`/`get_config()`/`get_ocr_tool()` are lazy singletons; paddle/PIL/screeninfo import inside methods. Importing `aram_mayhem_helper.cli` must not load PaddleOCR.
 - **GameData.reload()** clears all caches (champion metadata, entries, translation table, aramkit resources) — GUI calls it after crawls.
 - **pipeline tolerances (intentional unification)**: single-item level groups (zero variance → `ValueError`/`ZeroDivisionError`) are logged and skipped, not raised; lookup-miss entries are dropped entirely (legacy Suggest kept them in `champion_augment_data`).
@@ -107,5 +113,5 @@ Layering: entry points (cli/gui/web) → algorithm → utils/crawlers. Dependenc
 - **Dependencies**: base = flask/numpy(<2.0)/requests; `[ocr]` extra = paddleocr/paddlepaddle/Pillow/screeninfo/setuptools. Web deploy installs the base package only.
 - **Augment name↔ID↔level lookup**: `data/aramkit/resources/{version}/augments.json` (auto-downloaded by the aramkit crawler, follows game updates) takes **precedence**; `data/augment_trans.json` (manually maintained) only fills entries aramkit doesn't cover. Both go through the same OCR-tolerant `normalize_for_lookup` normalization. `GameData.augment_id`/`augment_info` are source-agnostic (opgg/aramkit share the same augment ID namespace).
 - **Two data sources coexist independently**: OP.GG (`data/opgg/aram_augments/`) and aramkit (`data/aramkit/aram_augments/{dataset}/`). Default source from `[data_source] source`; the web UI switches via the top-bar dropdown / `?source=` param. Both sources are min-max scaled to [0,1] per level group before Bayesian-sigmoid scoring, so scores are directly comparable. aramkit `winRate`/`pickRate` are 0~1 decimals; OP.GG values are 0-100 — no field-level isomorphism.
-- **Tests**: pytest (241 tests) with synthetic fixtures in `tests/fixtures/`; coverage gate ≥80% excluding `gui.py`/`ocr_tool.py`; mypy strict + ruff (E/F/I, line-length 120).
+- **Tests**: pytest with synthetic fixtures in `tests/fixtures/`; coverage gate ≥80% excluding `gui.py`/`ocr_tool.py`; mypy strict + ruff (E/F/I, line-length 120).
 - **Console scripts**: `aram-mayhem-helper` (primary) and `main` (deprecated alias) both point to `cli:cli_main`.

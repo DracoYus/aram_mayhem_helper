@@ -17,7 +17,7 @@
 
 ## 工作流程
 
-1. **数据爬取**: 从OP.GG和Data Dragon API爬取英雄和符文数据
+1. **数据爬取**: 从 OP.GG、aramkit.com 和 Data Dragon API 爬取英雄和符文数据
 2. **英雄识别**: 通过League Client API获取当前游戏中的英雄
 3. **符文识别**: 使用OCR识别屏幕上的符文选项
 4. **智能推荐**: 基于算法模型，综合考虑表现和流行度，给出符文选择建议
@@ -50,7 +50,7 @@ pip install uv
 
 ```bash
 git clone https://github.com/DracoYus/aram_mayhem_helper.git
-cd aram-mayhem-helper
+cd aram_mayhem_helper
 ```
 
 ### 3. 安装依赖
@@ -131,8 +131,10 @@ uv run python -m aram_mayhem_helper.gui
 
 GUI界面提供以下功能：
 
-- **识别英雄**: 点击按钮识别当前游戏中的英雄
-- **识别符文**: 点击按钮识别屏幕上的符文选项并显示推荐结果
+- **识别符文**: 点击按钮后自动识别当前游戏中的英雄，再识别屏幕上的符文选项并显示推荐结果（英雄识别已合并进该按钮）
+- **数据源切换**: 顶部下拉框切换 OP.GG / Aramkit，切换结果会写回 `config/config.toml` 持久化
+- **数据抓取**: 「获取英雄数据」「获取符文数据」按钮，符文数据可按起始页/结束页范围爬取
+- **数据更新检查**: 启动或切换数据源时自动检查 aramkit / 英雄数据是否有新版本，结果输出到运行日志
 - **实时日志**: 界面下方显示运行日志
 
 ### 网页模式 (Web)
@@ -177,7 +179,7 @@ docker run -p 5000:5000 -v /path/to/data:/app/data aram-mayhem-helper
 ### 测试
 
 ```bash
-uv run pytest          # 144 个测试（打分/推荐/数据层/web API/爬虫等）
+uv run pytest          # 全部测试（打分/推荐/数据层/web API/爬虫等）
 uv run mypy src/       # 类型检查（strict）
 uv run ruff check src/ tests/
 ```
