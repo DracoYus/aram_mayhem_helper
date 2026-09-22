@@ -55,6 +55,7 @@ consider_select_percentage_threshold = 0.30
 # enabled 仅影响 GUI/CLI 启动时是否自动开始监听（GUI 内可随时手动开关）
 enabled = false
 # 轮询间隔（秒）：越小触发越快（选择阶段每轮含一次 OCR ~0.3s）
+# 悬浮窗保活窗口按本值放宽（×3，下限 3 秒），保证选择界面还在显示时不会被自动关闭
 poll_interval = 1.0
 # 连续命中判据 N 次才触发（OCR 内容确认已过滤误判，1 即可）
 debounce_count = 1
