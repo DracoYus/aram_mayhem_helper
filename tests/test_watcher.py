@@ -64,6 +64,7 @@ class FakeWatcher(AutoWatcher):
             return
         self._false_positive_streak = 0
         self._next_ocr_delay = 0.0
+        self._selection_seen_at = time.monotonic()  # 悬浮窗保活时间戳
         result = self._detector.feed(True)
         if result.should_trigger:
             self._trigger_recommendation(augments)
@@ -266,10 +267,17 @@ class TestNotifyResult:
         watcher_module.set_tk_root(object())  # type: ignore[arg-type]
         assert watcher_module.notify_result(["快选：测试"]) is True
         assert watcher_module._overlay_queue.qsize() == 1
-        assert watcher_module._overlay_queue.get_nowait() == ["快选：测试"]
+        assert watcher_module._overlay_queue.get_nowait() == (["快选：测试"], None)
+
+    def test_keep_alive_travels_with_request(self) -> None:
+        """保活判据随请求入队（主线程建窗时才知道界面是否还在显示）。"""
+        predicate = lambda: True  # noqa: E731 - 测试替身：判据只需可调用
+        watcher_module.set_tk_root(object())  # type: ignore[arg-type]
+        assert watcher_module.notify_result(["快选：测试"], keep_alive=predicate) is True
+        assert watcher_module._overlay_queue.get_nowait() == (["快选：测试"], predicate)
 
     def test_poll_overlay_queue_builds_and_reschedules(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        built: list[list[str]] = []
+        built: list[tuple[list[str], Any]] = []
         scheduled: list[int] = []
 
         class FakeRoot:
@@ -278,12 +286,13 @@ class TestNotifyResult:
 
         monkeypatch.setattr(
             "aram_mayhem_helper.auto.overlay.show_recommendation_overlay",
-            lambda lines, root=None: built.append(lines) or True,
+            lambda lines, root=None, *, keep_alive=None: built.append((lines, keep_alive)) or True,
         )
+        predicate = lambda: True  # noqa: E731 - 测试替身：判据只需可调用
         watcher_module.set_tk_root(FakeRoot())  # type: ignore[arg-type]
-        watcher_module._overlay_queue.put(["快选：测试"])
+        watcher_module._overlay_queue.put((["快选：测试"], predicate))
         watcher_module.poll_overlay_queue()
-        assert built == [["快选：测试"]]
+        assert built == [(["快选：测试"], predicate)]
         assert scheduled == [watcher_module._OVERLAY_POLL_MS]
 
 
@@ -386,3 +395,74 @@ class TestPartialEmptyFrameFilter:
         for _ in range(3):
             w._poll_once()
         assert w.recommend_calls == 2
+
+
+class TestSelectionUiKeepAlive:
+    """悬浮窗保活判据：选择界面还在显示 → 判据为真（界面消失后自然转假）。"""
+
+    def _w(self, **kwargs: Any) -> FakeWatcher:
+        return FakeWatcher(poll_interval=0.01, debounce_count=1, **kwargs)
+
+    def test_never_confirmed_is_not_alive(self) -> None:
+        assert AutoWatcher().selection_ui_alive() is False
+
+    def test_alive_after_confirmed_selection(self) -> None:
+        """每一轮确认到选择界面都会刷新时间戳 → 判据持续为真（悬浮窗不关闭）。"""
+        w = self._w()
+        w.pixel_samples = [_SELECTION_STATS] * 3
+        w.ocr_results = [_REAL_AUGMENTS] * 3
+        for _ in range(3):
+            w._poll_once()
+            assert w.selection_ui_alive() is True
+
+    def test_expires_after_grace(self) -> None:
+        """超过保活窗口未再确认（界面消失/窗口转后台）→ 判据转假。"""
+        w = self._w()
+        w._selection_seen_at = time.monotonic() - w._alive_grace - 1.0
+        assert w.selection_ui_alive() is False
+
+    def test_pixel_miss_does_not_refresh_timestamp(self) -> None:
+        """像素预筛未命中（回到游戏画面）：时间戳不刷新，判据不再被延长。"""
+        w = self._w()
+        w.pixel_samples = [_SELECTION_STATS, _INGAME_STATS]
+        w.ocr_results = [_REAL_AUGMENTS]
+        w._poll_once()
+        confirmed_at = w._selection_seen_at
+        assert confirmed_at > 0.0
+        w._poll_once()
+        assert w._selection_seen_at == confirmed_at
+
+    def test_grace_scales_with_poll_interval(self) -> None:
+        """轮询间隔调大时保活窗口随之放宽（否则界面还在、悬浮窗却已关闭）。"""
+        assert AutoWatcher(poll_interval=5.0)._alive_grace == 5.0 * watcher_module._SELECTION_ALIVE_GRACE_FACTOR
+        assert AutoWatcher(poll_interval=0.1)._alive_grace == watcher_module._SELECTION_ALIVE_GRACE_MIN_SECONDS
+
+    def test_start_resets_alive_state(self) -> None:
+        """重新开始监听不继承上一轮的选择界面状态。"""
+        w = AutoWatcher(poll_interval=0.01)
+        w._selection_seen_at = time.monotonic()
+        w._poll_once = lambda: None  # noqa: B008 - 测试替身：隔离窗口/截图环境
+        w.start()
+        try:
+            assert w.selection_ui_alive() is False
+        finally:
+            w.stop()
+            w.join(timeout=2)
+
+    def test_trigger_forwards_keep_alive_to_notify(self) -> None:
+        """触发推荐时把保活判据交给展示层（悬浮窗据此决定是否关闭）。"""
+        captured: dict[str, Any] = {}
+
+        def fake_notify(lines: list[str], *, keep_alive: Any = None) -> bool:
+            captured["lines"] = lines
+            captured["keep_alive"] = keep_alive
+            return True
+
+        w = AutoWatcher(
+            run_recommend_fn=lambda *args, **kwargs: RecommendOutcome(lines=["快选：测试"]),
+            notify_fn=fake_notify,
+        )
+        w._trigger_recommendation()
+        assert captured["lines"] == ["快选：测试"]
+        assert captured["keep_alive"] == w.selection_ui_alive
+        assert captured["keep_alive"]() is False  # 尚未确认选择界面 → 按固定时长显示

@@ -5,12 +5,15 @@
   比按主屏尺寸截更稳，副屏/窗口化都能对准）
 - 两级检测：像素判据 < 5ms 廉价预筛 → OCR 文本查表内容确认
 - 状态机推进 + 触发 ``run_recommend`` + 结果展示（悬浮窗/控制台）
+- 结果展示：悬浮窗在符文选择界面存续期间保持显示（``selection_ui_alive``
+  作为保活判据传给 overlay），界面消失后才关闭
 """
 
 import ctypes
 import logging
 import queue
 import threading
+import time
 import tkinter as tk
 from collections.abc import Callable
 from ctypes import wintypes
@@ -38,6 +41,12 @@ _OVERLAY_POLL_MS = 200
 # 误报退避（秒）：像素预筛命中但 OCR 内容非符文（死亡回放/记分板等持续 UI）
 # 时，拉长到该间隔再采样，减少无效 OCR
 _FALSE_POSITIVE_BACKOFF_SECONDS = 3.0
+# 悬浮窗保活窗口（秒）：最后一次确认选择界面后，仍视为「界面还在」的时长。
+# 轮询间隔可配置（config [auto_watch] poll_interval），窗口按间隔倍数放宽，
+# 否则间隔调大后会出现「界面还在、悬浮窗却已关闭」；下限需覆盖一次 OCR 耗时，
+# 也容忍 reroll 动画期间的若干次读空帧
+_SELECTION_ALIVE_GRACE_FACTOR = 3.0
+_SELECTION_ALIVE_GRACE_MIN_SECONDS = 3.0
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 
@@ -107,9 +116,15 @@ def _gray_stats(image: object) -> tuple[float, float]:
     return float(arr.mean()), float(arr.std())
 
 
-def notify_result(lines: list[str]) -> bool:
+def notify_result(lines: list[str], *, keep_alive: Callable[[], bool] | None = None) -> bool:
     """展示推荐结果：GUI 运行中把悬浮窗请求放入队列（主线程轮询消费），
     否则打印控制台。返回是否成功受理。
+
+    Args:
+        lines: 建议行
+        keep_alive: 悬浮窗保活判据（符文选择界面是否仍在显示）。为真时
+            悬浮窗不会按显示时长自动关闭，界面消失后才关闭；None 表示
+            按固定时长显示。仅 GUI 悬浮窗使用，CLI 打印路径忽略。
 
     watcher 线程不能调用 Tk API（``root.after`` 也非线程安全，实测抛
     ``RuntimeError: main thread is not in main loop``）。GUI 模式沿用
@@ -120,7 +135,7 @@ def notify_result(lines: list[str]) -> bool:
         return False
 
     if _tk_root_ref is not None:
-        _overlay_queue.put(lines)
+        _overlay_queue.put((lines, keep_alive))
         return True
 
     # CLI 模式：无 Tk 主循环，直接打印
@@ -132,8 +147,9 @@ def notify_result(lines: list[str]) -> bool:
 
 # GUI 主窗引用（gui.py 创建窗口后注入；None 表示 CLI 模式）
 _tk_root_ref: tk.Misc | None = None
-# 悬浮窗请求队列：watcher 线程 → Tk 主线程（与 GUI 日志桥接同模式）
-_overlay_queue: queue.Queue[list[str]] = queue.Queue()
+# 悬浮窗请求队列：watcher 线程 → Tk 主线程（与 GUI 日志桥接同模式），
+# 元素为 (建议行, 保活判据)
+_overlay_queue: queue.Queue[tuple[list[str], Callable[[], bool] | None]] = queue.Queue()
 
 
 def set_tk_root(root: tk.Misc | None) -> None:
@@ -152,8 +168,8 @@ def poll_overlay_queue() -> None:
 
     try:
         while True:
-            lines = _overlay_queue.get_nowait()
-            show_recommendation_overlay(lines, root=_tk_root_ref)
+            lines, keep_alive = _overlay_queue.get_nowait()
+            show_recommendation_overlay(lines, root=_tk_root_ref, keep_alive=keep_alive)
     except queue.Empty:
         pass
     if _tk_root_ref is not None:
@@ -175,8 +191,9 @@ class AutoWatcher:
 
     Args:
         run_recommend_fn: 推荐流程函数（默认 ``run_recommend``，测试注入替身）
-        notify_fn: 结果展示函数 ``(lines) -> bool``（默认 ``notify_result``，
-            GUI 模式显示悬浮窗、CLI 打印控制台；测试注入替身）
+        notify_fn: 结果展示函数 ``(lines, *, keep_alive=None) -> bool``（默认
+            ``notify_result``，GUI 模式显示悬浮窗、CLI 打印控制台；测试注入的
+            替身需接受 keep_alive 关键字，否则触发时会抛 TypeError）
         poll_interval: 轮询间隔秒数
         thresholds: 像素判别阈值（None 取默认）
         debounce_count: 状态机去抖次数
@@ -201,10 +218,25 @@ class AutoWatcher:
         self._last_augments: list[str] | None = None  # 上次 OCR 识别文本（reroll 比对基准）
         self._false_positive_streak = 0  # 连续误报计数（降噪：只记第一条）
         self._next_ocr_delay = 0.0  # 误报退避：本轮采样后额外等待的秒数
+        self._selection_seen_at = 0.0  # 最近一次确认选择界面的时刻（monotonic；0 = 从未确认）
+        self._alive_grace = max(_SELECTION_ALIVE_GRACE_MIN_SECONDS, poll_interval * _SELECTION_ALIVE_GRACE_FACTOR)
 
     @property
     def is_running(self) -> bool:
         return not self._stop_event.is_set() and self._thread is not None and self._thread.is_alive()
+
+    def selection_ui_alive(self) -> bool:
+        """符文选择界面是否仍在显示（悬浮窗保活判据）。
+
+        判据：最近一次内容确认距现在不足 ``_alive_grace``。时间戳只在确认到
+        选择界面时刷新，因此界面消失（或游戏窗口转入后台、采样停止）后判据
+        自然转假，悬浮窗不会被无限保活。
+
+        供 Tk 主线程调用（overlay 的关闭复查），与监听线程并发读写单个
+        float——CPython 下读写原子，无需加锁。
+        """
+        seen_at = self._selection_seen_at
+        return seen_at > 0.0 and (time.monotonic() - seen_at) < self._alive_grace
 
     def stop(self) -> None:
         """请求停止轮询（线程安全；轮询线程在下一间隔退出）。"""
@@ -218,6 +250,7 @@ class AutoWatcher:
         self._stop_event.clear()
         self._detector.reset()
         self._last_augments = None
+        self._selection_seen_at = 0.0  # 新一轮监听不继承上一轮的选择界面状态
         self._thread = threading.Thread(target=self._watch_loop, name="auto-watcher", daemon=True)
         self._thread.start()
         logger.info("自动监听已启动（每 %.0f 秒检测一次符文选择界面）", self._poll_interval)
@@ -285,9 +318,10 @@ class AutoWatcher:
                 logger.debug("像素命中但内容非符文（%s），进入误报退避", augments)
             self._next_ocr_delay = _FALSE_POSITIVE_BACKOFF_SECONDS
             return
-        # 内容确认通过：重置误报退避
+        # 内容确认通过：重置误报退避，并刷新悬浮窗保活时间戳（界面仍在显示）
         self._false_positive_streak = 0
         self._next_ocr_delay = 0.0
+        self._selection_seen_at = time.monotonic()
 
         result = self._detector.feed(True)
         if result.should_trigger:
@@ -327,6 +361,9 @@ class AutoWatcher:
         Args:
             augments: 预筛阶段已完成的 OCR 结果（复用，避免重复截图识别）；
                 None 时基准取 run_recommend 返回的识别文本。
+
+        展示时注入保活判据：只要选择界面还在显示，悬浮窗就不自动关闭
+        （见 ``selection_ui_alive``）。
         """
         logger.info("检测到符文选择界面，自动执行推荐...")
         from aram_mayhem_helper.ocr.ocr_tool import get_ocr_tool
@@ -338,7 +375,7 @@ class AutoWatcher:
         # reroll 比对基准：优先用预筛 OCR 结果（与触发判定一致），否则取推荐流程的识别文本
         self._last_augments = augments if augments is not None else outcome.augments
         if outcome.lines:
-            send_ok = self._notify_fn(outcome.lines)
+            send_ok = self._notify_fn(outcome.lines, keep_alive=self.selection_ui_alive)
             logger.info("推荐结果展示%s", "成功" if send_ok else "失败")
         else:
             logger.warning("自动推荐未产生建议（OCR 未匹配或数据缺失）")
