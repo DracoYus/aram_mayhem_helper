@@ -9,6 +9,7 @@
 
 - 通过OCR识别游戏中的符文选项
 - 根据当前英雄和符文数据，智能推荐最优符文选择
+- 自动监听游戏界面，检测到符文选择界面时无需操作即可弹出推荐
 - 支持命令行（CLI）、图形界面（GUI）和网页（Web）三种交互方式
 
 ## 效果展示
@@ -21,6 +22,7 @@
 2. **英雄识别**: 通过League Client API获取当前游戏中的英雄
 3. **符文识别**: 使用OCR识别屏幕上的符文选项
 4. **智能推荐**: 基于算法模型，综合考虑表现和流行度，给出符文选择建议
+5. **自动监听**（可选）: 轮询检测符文选择界面，命中后自动执行上述识别与推荐流程并展示结果
 
 ## 安装说明
 
@@ -93,6 +95,13 @@ immediate_select_score_threshold = 0.70  # 快选分数阈值
 consider_select_score_threshold = 0.50   # 考虑分数阈值
 immediate_select_percentage_threshold = 0.10  # 快选排名阈值（百分比）
 consider_select_percentage_threshold = 0.30   # 考虑排名阈值（百分比）
+
+[auto_watch]
+enabled = false            # 启动时是否自动开始监听（GUI 内可随时手动开关）
+poll_interval = 1.0        # 轮询间隔（秒），越小触发越快
+debounce_count = 1         # 连续命中判据 N 次才触发
+mean_threshold = 60.0      # 区域灰度均值上限（暗背景特征）
+std_threshold = 40.0       # 区域灰度标准差下限（高对比文字特征）
 ```
 
 ## 使用说明
@@ -119,6 +128,9 @@ uv run python -m aram_mayhem_helper.cli aramkit-crawler
 uv run python -m aram_mayhem_helper.cli aramkit-crawler --force
 # 可选参数: --start-id 1 --end-id 999 --dataset all|high（high 为高分段数据）
 
+# 自动监听符文选择界面：检测到后自动推荐并在控制台打印（Ctrl+C 退出）
+uv run python -m aram_mayhem_helper.cli auto-watch
+
 # 启动网页应用，浏览符文数据
 uv run python -m aram_mayhem_helper.cli web
 ```
@@ -135,7 +147,24 @@ GUI界面提供以下功能：
 - **数据源切换**: 顶部下拉框切换 OP.GG / Aramkit，切换结果会写回 `config/config.toml` 持久化
 - **数据抓取**: 「获取英雄数据」「获取符文数据」按钮，符文数据可按起始页/结束页范围爬取
 - **数据更新检查**: 启动或切换数据源时自动检查 aramkit / 英雄数据是否有新版本，结果输出到运行日志
+- **自动监听**: 「自动监听」开关按钮，开启后检测到符文选择界面自动推荐并以悬浮窗展示结果
 - **实时日志**: 界面下方显示运行日志
+
+### 自动监听模式
+
+不想手动点按钮时，可以开启自动监听：程序轮询检测符文选择界面，命中后自动识别并展示推荐结果。
+
+```bash
+# CLI：检测到选择界面时在控制台打印推荐（Ctrl+C 退出）
+uv run python -m aram_mayhem_helper.cli auto-watch
+```
+
+GUI 模式点击「自动监听」开关即可，推荐结果以悬浮窗弹出（悬浮窗自身不会出现在 OCR 截图中）。
+
+- **检测方式**: 符文选择界面为暗背景 + 高对比文字，程序先按像素特征快速预筛，再用 OCR 文本查表确认至少匹配一个已知符文，避免记分板、死亡回放等暗色界面误触发
+- **结果展示**: 悬浮窗最短显示 8 秒；符文选择界面仍在显示时保持不关闭，界面消失或重选（reroll）后按新结果重新弹出
+- **使用前提**: 游戏窗口需在前台，程序通过窗口标题定位客户区，支持副屏与窗口化模式
+- **相关配置**: [`[auto_watch]`](#4-配置说明)；`enabled = true` 可在启动时自动开启监听
 
 ### 网页模式 (Web)
 
